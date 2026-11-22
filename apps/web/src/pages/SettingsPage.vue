@@ -1,11 +1,82 @@
 <script setup lang="ts">
-import PlaceholderPage from '../components/PlaceholderPage.vue';
+import AppIcon from '../components/AppIcon.vue';
+import { useAuthStore } from '../stores/auth.ts';
+
+const auth = useAuthStore();
+const later = [
+  { label: '카드·계좌', stage: '3단계' },
+  { label: '문자 전달 토큰', stage: '4단계' },
+  { label: '분류·규칙', stage: '3단계' },
+  { label: '예산', stage: '6단계' },
+  { label: '백업', stage: '이후 단계' },
+];
 </script>
 
 <template>
-  <PlaceholderPage
-    title="설정"
-    description="카드·계좌, 문자 전달 토큰, 분류·규칙, 예산, 패스키·잠금, 구성원, 백업을 관리합니다."
-    stage="2단계부터 차례로"
-  />
+  <section class="page">
+    <h1>설정</h1>
+    <ul class="card list">
+      <li>
+        <RouterLink to="/settings/security" class="row" data-testid="settings-security-link">
+          <span>보안</span>
+          <span class="muted small">패스키, 잠금, 비밀번호, 로그인 기기</span>
+          <AppIcon name="chevron" :size="18" class="chevron" />
+        </RouterLink>
+      </li>
+      <li v-if="auth.isAdmin">
+        <RouterLink to="/settings/members" class="row" data-testid="settings-members-link">
+          <span>구성원</span>
+          <span class="muted small">초대, 역할, 사용 중지</span>
+          <AppIcon name="chevron" :size="18" class="chevron" />
+        </RouterLink>
+      </li>
+      <li v-for="item in later" :key="item.label">
+        <div class="row disabled">
+          <span>{{ item.label }}</span>
+          <span class="muted small">{{ item.stage }}에서 제공</span>
+        </div>
+      </li>
+    </ul>
+    <p class="account muted">
+      {{ auth.user?.displayName }} ({{ auth.user?.loginName }}) ·
+      {{ auth.isAdmin ? '관리자' : '구성원' }}
+    </p>
+    <button type="button" class="btn btn-block" data-testid="logout" @click="auth.logout()">
+      로그아웃
+    </button>
+  </section>
 </template>
+
+<style scoped>
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  color: inherit;
+  text-decoration: none;
+}
+.row.disabled {
+  opacity: 0.6;
+}
+li + li .row {
+  border-top: 1px solid var(--border);
+}
+.small {
+  font-size: 0.8rem;
+}
+.chevron {
+  margin-left: auto;
+  color: var(--text-muted);
+}
+.account {
+  margin: 24px 0 8px;
+  font-size: 0.85rem;
+  text-align: center;
+}
+</style>

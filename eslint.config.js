@@ -6,7 +6,14 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['**/dist/**', '**/dev-dist/**', '**/coverage/**', 'apps/server/drizzle/**'],
+    ignores: [
+      '**/dist/**',
+      '**/dev-dist/**',
+      '**/coverage/**',
+      'apps/server/drizzle/**',
+      'test-results/**',
+      'playwright-report/**',
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.strict,
@@ -23,7 +30,13 @@ export default tseslint.config(
     languageOptions: { globals: globals.browser },
   },
   {
-    files: ['apps/server/**/*.ts', 'packages/**/*.ts', '**/*.config.{ts,js}', '**/test/**/*.ts'],
+    files: [
+      'apps/server/**/*.ts',
+      'packages/**/*.ts',
+      'e2e/**/*.ts',
+      '**/*.config.{ts,js}',
+      '**/test/**/*.ts',
+    ],
     languageOptions: { globals: globals.node },
   },
   {

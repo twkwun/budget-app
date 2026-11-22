@@ -41,6 +41,9 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?set PUBLIC_ORIGIN in .env}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # The app port is only reachable through the Tailscale sidecar, so its
+      # X-Forwarded-For header is trusted for the client IP (rate limiting).
+      TRUST_PROXY: 'true'
       BACKUP_ENABLED: ${BACKUP_ENABLED:-true}
       BACKUP_TIME: ${BACKUP_TIME:-04:00}
       BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}

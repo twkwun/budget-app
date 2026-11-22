@@ -20,6 +20,7 @@ const envSchema = z
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
       .default('info'),
     WEB_DIST_DIR: z.string().min(1).optional(),
+    TRUST_PROXY: z.stringbool().default(false),
     BACKUP_ENABLED: z.stringbool().default(true),
     BACKUP_TIME: z
       .string()
@@ -94,6 +95,11 @@ export interface Config {
   sessionSecret: string;
   publicOrigin: string;
   logLevel: LogLevel;
+  /**
+   * Trust X-Forwarded-For from the reverse proxy (the Tailscale sidecar) for the
+   * client IP. Only enable when the app port is reachable solely via that proxy.
+   */
+  trustProxy: boolean;
   /** Directory with the built web app; served only if it contains index.html. */
   webDistDir: string;
   backup: {
@@ -141,6 +147,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env, cwd = proces
     sessionSecret: env.SESSION_SECRET ?? DEV_SESSION_SECRET,
     publicOrigin: (env.PUBLIC_ORIGIN ?? `http://localhost:5173`).replace(/\/$/, ''),
     logLevel: env.LOG_LEVEL,
+    trustProxy: env.TRUST_PROXY,
     webDistDir: env.WEB_DIST_DIR ? path.resolve(cwd, env.WEB_DIST_DIR) : defaultWebDistDir,
     backup: {
       enabled: env.BACKUP_ENABLED,

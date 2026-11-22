@@ -10,3 +10,6 @@
 docker/tailscale
 docs
 *.md
+e2e
+test-results
+playwright-report

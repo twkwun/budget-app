@@ -3,3 +3,5 @@ pnpm-lock.yaml
 **/dev-dist
 apps/server/drizzle/meta
 docs/DESIGN.md
+test-results
+playwright-report

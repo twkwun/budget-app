@@ -104,11 +104,37 @@ export const sessions = sqliteTable(
     createdAt: createdAt(),
     expiresAt: timestamp('expires_at').notNull(),
     lastSeenAt: timestamp('last_seen_at').notNull().default(nowMs),
-    /** Last successful biometric (passkey) verification, for app lock and re-auth. */
+    /**
+     * Last successful credential check in this session (sign-in, unlock or
+     * step-up with a passkey or the password). Drives step-up re-auth.
+     */
     lastVerifiedAt: timestamp('last_verified_at'),
+    /** Set when the session was locked explicitly (app hidden, or "lock now"). */
+    lockedAt: timestamp('locked_at'),
     userAgent: text('user_agent'),
+    /** Client IP at the last request (as seen through TRUST_PROXY). */
+    lastIp: text('last_ip'),
   },
   (t) => [index('sessions_user_idx').on(t.userId), index('sessions_expires_idx').on(t.expiresAt)],
+);
+
+export const invites = sqliteTable(
+  'invites',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    /** SHA-256 of the invite token; the token only exists in the shared link. */
+    tokenHash: text('token_hash').notNull().unique(),
+    role: text('role').$type<UserRole>().notNull().default('member'),
+    createdByUserId: integer('created_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: createdAt(),
+    expiresAt: timestamp('expires_at').notNull(),
+    usedAt: timestamp('used_at'),
+    usedByUserId: integer('used_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    revokedAt: timestamp('revoked_at'),
+  },
+  (t) => [index('invites_created_by_idx').on(t.createdByUserId)],
 );
 
 export const accounts = sqliteTable(

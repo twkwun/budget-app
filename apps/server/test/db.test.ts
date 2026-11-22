@@ -12,6 +12,7 @@ const EXPECTED_TABLES = [
   'categories',
   'category_rules',
   'import_batches',
+  'invites',
   'passkeys',
   'raw_records',
   'sessions',

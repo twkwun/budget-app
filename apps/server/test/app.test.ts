@@ -102,7 +102,33 @@ describe('routing', () => {
     expect(res.statusCode).toBe(404);
   });
 
+  it.each([
+    '/api%2fhealth',
+    '/api%2Fhealth',
+    '/api%252fhealth',
+    '/%61%70%69%2f%68ealth',
+    '/API/x',
+    '//api/x',
+    '/api%5chealth',
+    '/api%2f',
+  ])('returns JSON 404 for the encoded or odd API path %s', async (url) => {
+    const { app } = await start({ web: true });
+    const res = await app.inject({ method: 'GET', url });
+    expect(res.statusCode).toBe(404);
+    expect(res.headers['content-type']).toContain('application/json');
+    expect(res.json()).toMatchObject({ error: { code: 'not_found' } });
+  });
+
+  it('routes percent-encoded letters to the real API, never to the SPA', async () => {
+    const { app } = await start({ web: true });
+    const res = await app.inject({ method: 'GET', url: '/%61pi/health' });
+    expect(res.headers['content-type']).toContain('application/json');
+    expect(res.json<HealthResponse>().status).toBe('ok');
+  });
+
   it('classifies API paths exactly', () => {
+    expect(isApiPath('/api%2Fx')).toBe(true);
+    expect(isApiPath('/api%zz')).toBe(false);
     expect(isApiPath('/api')).toBe(true);
     expect(isApiPath('/api/health?x')).toBe(true);
     expect(isApiPath('/api?x')).toBe(true);

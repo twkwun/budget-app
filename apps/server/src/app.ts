@@ -4,16 +4,31 @@ import Fastify, {
   type FastifyInstance,
   type FastifyServerOptions,
 } from 'fastify';
-import type { ApiErrorBody } from '@budget/shared';
+import type { ApiErrorBody, ApiErrorCode } from '@budget/shared';
+import { registerAuthGuard, type RouteAccess } from './auth/guard.ts';
+import type { ScryptParams } from './auth/password.ts';
 import type { Config } from './config.ts';
+import { createContext } from './context.ts';
 import type { AppDatabase } from './db/client.ts';
+import { HttpError } from './http/errors.ts';
+import { authRoutes } from './routes/auth.ts';
 import { healthRoutes } from './routes/health.ts';
+import { meRoutes } from './routes/me.ts';
+import { memberRoutes } from './routes/members.ts';
+import { passkeyRoutes } from './routes/passkeys.ts';
+import { setupRoutes } from './routes/setup.ts';
 import { hasWebBuild, registerWebApp } from './static.ts';
 
 export interface BuildAppOptions {
   config: Config;
   db: AppDatabase;
   logger?: FastifyServerOptions['logger'];
+  /** Clock override for tests. */
+  now?: () => number;
+  /** Password hashing cost override for tests. */
+  passwordParams?: ScryptParams;
+  /** Filled with every /api route and its access level once the app is built. */
+  routeAccess?: RouteAccess[];
 }
 
 const SECURITY_HEADERS: Record<string, string> = {
@@ -35,19 +50,51 @@ const SECURITY_HEADERS: Record<string, string> = {
   ].join('; '),
 };
 
+/**
+ * Path of a raw request URL, percent-decoded (repeatedly, to undo double
+ * encoding), with backslashes and repeated slashes folded and lowercased.
+ * Used only to classify requests, never to route them.
+ */
+export function canonicalPath(url: string): string {
+  let pathname = url.split(/[?#]/, 1)[0] ?? '';
+  for (let i = 0; i < 3; i += 1) {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(pathname);
+    } catch {
+      break;
+    }
+    if (decoded === pathname) break;
+    pathname = decoded;
+  }
+  return pathname
+    .replaceAll('\\', '/')
+    .replace(/\/{2,}/g, '/')
+    .toLowerCase();
+}
+
+/** True for /api and anything below it, however it is encoded. */
 export function isApiPath(url: string): boolean {
-  const pathname = url.split('?', 1)[0] ?? '';
+  const pathname = canonicalPath(url);
   return pathname === '/api' || pathname.startsWith('/api/');
 }
 
-function apiError(code: string, message: string): ApiErrorBody {
+function apiError(code: ApiErrorCode, message: string): ApiErrorBody {
   return { error: { code, message } };
 }
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
   const { config, db } = options;
+  const ctx = createContext({
+    config,
+    db,
+    now: options.now,
+    passwordParams: options.passwordParams,
+  });
   const app = Fastify({
     logger: options.logger ?? { level: config.logLevel },
+    trustProxy: config.trustProxy,
+    bodyLimit: 256 * 1024,
   });
 
   app.addHook('onSend', async (_request, reply) => {
@@ -56,16 +103,37 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     }
   });
 
-  app.setErrorHandler<FastifyError>((error, request, reply) => {
+  app.setErrorHandler<FastifyError | HttpError>((error, request, reply) => {
+    if (error instanceof HttpError) {
+      return reply
+        .code(error.statusCode)
+        .headers(error.headers)
+        .send(apiError(error.code, error.message));
+    }
     const status = error.statusCode && error.statusCode >= 400 ? error.statusCode : 500;
-    if (status >= 500) request.log.error({ err: error }, 'request failed');
-    const message = status >= 500 ? 'Internal server error' : error.message;
-    return reply.code(status).send(apiError(error.code ?? 'error', message));
+    // The static file server refuses odd paths such as `//api/x` or `/api%5cx`
+    // with 403; anything that looks like an API path gets the API's 404 instead.
+    if ((status === 403 || status === 404) && isApiPath(request.url)) {
+      return reply.code(404).send(apiError('not_found', 'Route not found'));
+    }
+    if (status >= 500) {
+      request.log.error({ err: error }, 'request failed');
+      return reply.code(500).send(apiError('internal_error', 'Internal server error'));
+    }
+    const code: ApiErrorCode = error.validation || status === 400 ? 'validation_error' : 'error';
+    return reply.code(status).send(apiError(code, error.message));
   });
 
   await app.register(
     async (api) => {
+      // Every /api route requires an unlocked session unless it opts out.
+      registerAuthGuard(api, ctx, options.routeAccess);
       await api.register(healthRoutes, { db, app: config.app });
+      await api.register(setupRoutes(ctx));
+      await api.register(authRoutes(ctx), { prefix: '/auth' });
+      await api.register(meRoutes(ctx));
+      await api.register(passkeyRoutes(ctx));
+      await api.register(memberRoutes(ctx));
     },
     { prefix: '/api' },
   );
@@ -79,7 +147,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   }
 
   app.setNotFoundHandler((request, reply) => {
-    const pathname = request.url.split('?', 1)[0] ?? '';
+    const pathname = canonicalPath(request.url);
     const isPageRequest =
       serveWeb &&
       (request.method === 'GET' || request.method === 'HEAD') &&
@@ -91,7 +159,9 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     }
     return reply
       .code(404)
-      .send(apiError('not_found', `Route ${request.method} ${pathname} not found`));
+      .send(
+        apiError('not_found', `Route ${request.method} ${request.url.split('?', 1)[0]} not found`),
+      );
   });
 
   return app;

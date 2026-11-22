@@ -12,7 +12,7 @@ export interface HealthRouteOptions {
 const startedAt = Date.now();
 
 export const healthRoutes: FastifyPluginAsync<HealthRouteOptions> = async (fastify, opts) => {
-  fastify.get('/health', async (request, reply) => {
+  fastify.get('/health', { config: { auth: 'public' } }, async (request, reply) => {
     let db: HealthResponse['db'];
     try {
       opts.db.get(sql`select 1`);

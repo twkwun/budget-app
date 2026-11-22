@@ -2,6 +2,17 @@ import { createPinia } from 'pinia';
 import { createApp } from 'vue';
 import App from './App.vue';
 import { router } from './router.ts';
+import { useAuthStore } from './stores/auth.ts';
 import './styles/base.css';
 
-createApp(App).use(createPinia()).use(router).mount('#app');
+const app = createApp(App).use(createPinia());
+useAuthStore().install({
+  onSignedOut: (explicit) => {
+    const current = router.currentRoute.value;
+    if (current.meta.public) return;
+    // After an explicit logout start fresh; after an expired session come back here.
+    const keep = !explicit && current.fullPath !== '/';
+    void router.replace({ name: 'login', query: keep ? { redirect: current.fullPath } : {} });
+  },
+});
+app.use(router).mount('#app');

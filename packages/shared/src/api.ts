@@ -14,9 +14,28 @@ export interface HealthResponse {
   };
 }
 
+export type ApiErrorCode =
+  | 'error'
+  | 'internal_error'
+  | 'not_found'
+  | 'validation_error'
+  | 'unauthenticated'
+  | 'invalid_credentials'
+  | 'forbidden'
+  | 'invalid_origin'
+  | 'session_locked'
+  | 'reauth_required'
+  | 'rate_limited'
+  | 'setup_closed'
+  | 'login_name_taken'
+  | 'last_admin'
+  | 'invite_invalid'
+  | 'challenge_invalid'
+  | 'passkey_invalid';
+
 export interface ApiErrorBody {
   error: {
-    code: string;
+    code: ApiErrorCode;
     message: string;
   };
 }

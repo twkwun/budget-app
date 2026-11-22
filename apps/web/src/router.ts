@@ -1,8 +1,14 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router';
+import { useAuthStore } from './stores/auth.ts';
 
 declare module 'vue-router' {
   interface RouteMeta {
     title: string;
+    /** Reachable without signing in (setup, login, recovery, invite). */
+    public?: boolean;
+    /** Full-screen layout without the navigation shell. */
+    bare?: boolean;
+    adminOnly?: boolean;
   }
 }
 
@@ -50,10 +56,46 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '설정' },
   },
   {
+    path: '/settings/security',
+    name: 'settings-security',
+    component: () => import('./pages/settings/SecurityPage.vue'),
+    meta: { title: '보안' },
+  },
+  {
+    path: '/settings/members',
+    name: 'settings-members',
+    component: () => import('./pages/settings/MembersPage.vue'),
+    meta: { title: '구성원', adminOnly: true },
+  },
+  {
     path: '/more',
     name: 'more',
     component: () => import('./pages/MorePage.vue'),
     meta: { title: '더보기' },
+  },
+  {
+    path: '/setup',
+    name: 'setup',
+    component: () => import('./pages/auth/SetupPage.vue'),
+    meta: { title: '처음 설정', public: true, bare: true },
+  },
+  {
+    path: '/login',
+    name: 'login',
+    component: () => import('./pages/auth/LoginPage.vue'),
+    meta: { title: '로그인', public: true, bare: true },
+  },
+  {
+    path: '/recovery',
+    name: 'recovery',
+    component: () => import('./pages/auth/RecoveryPage.vue'),
+    meta: { title: '비밀번호 재설정', public: true, bare: true },
+  },
+  {
+    path: '/invite/:token',
+    name: 'invite',
+    component: () => import('./pages/auth/InvitePage.vue'),
+    meta: { title: '초대 수락', public: true, bare: true },
   },
   {
     path: '/:pathMatch(.*)*',
@@ -69,6 +111,38 @@ export const router = createRouter({
   scrollBehavior: (_to, _from, saved) => saved ?? { top: 0 },
 });
 
+router.beforeEach(async (to) => {
+  const auth = useAuthStore();
+  try {
+    await auth.ensureLoaded();
+  } catch {
+    // Server unreachable: let public pages render; protected ones go to login,
+    // which shows the connection problem.
+    if (!to.meta.public) return { name: 'login' };
+    return true;
+  }
+  if (auth.setupRequired) return to.name === 'setup' ? true : { name: 'setup' };
+  if (to.name === 'setup') return { name: auth.authenticated ? 'home' : 'login' };
+  if (to.meta.public) {
+    if (auth.authenticated && (to.name === 'login' || to.name === 'recovery')) {
+      return { name: 'home' };
+    }
+    return true;
+  }
+  if (!auth.authenticated) {
+    return { name: 'login', query: to.fullPath === '/' ? {} : { redirect: to.fullPath } };
+  }
+  if (to.meta.adminOnly && !auth.isAdmin) return { name: 'settings' };
+  return true;
+});
+
 router.afterEach((to) => {
   document.title = to.name === 'home' ? '가계부' : `${to.meta.title} · 가계부`;
 });
+
+/** Only same-app paths are accepted as post-login redirects. */
+export function safeRedirect(value: unknown): string {
+  return typeof value === 'string' && value.startsWith('/') && !value.startsWith('//')
+    ? value
+    : '/';
+}
