@@ -19,7 +19,15 @@ export function tempDir(): string {
 }
 
 export function testConfig(env: Record<string, string> = {}): Config {
-  return loadConfig({ NODE_ENV: 'test', DATA_DIR: tempDir(), LOG_LEVEL: 'silent', ...env });
+  // WEB_DIST_DIR defaults to an empty dir so results never depend on whether
+  // apps/web has been built locally.
+  return loadConfig({
+    NODE_ENV: 'test',
+    DATA_DIR: tempDir(),
+    WEB_DIST_DIR: tempDir(),
+    LOG_LEVEL: 'silent',
+    ...env,
+  });
 }
 
 /** A migrated database in a fresh temp directory, closed after the test. */

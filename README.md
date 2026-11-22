@@ -1,0 +1,176 @@
+# 가계부
+
+가족이 함께 쓰는 가계부 웹앱(PWA)입니다. 시놀로지 NAS의 Docker에서 실행하고 Tailscale로만 접속합니다. 설계와 단계별 계획은 [docs/DESIGN.md](docs/DESIGN.md)를 보세요.
+
+> 현재 1단계(뼈대)입니다. 화면 틀, 서버, DB 스키마, 백업, 배포 구성만 있고 로그인과 가계부 기능은 아직 없습니다.
+
+## 구성
+
+```
+apps/server     Fastify API 서버, Drizzle(SQLite) 스키마·마이그레이션, 백업 작업
+apps/web        Vue 3 + Vite PWA (폰은 하단 탭, 아이패드·PC는 좌측 메뉴)
+packages/shared 서버·화면 공용 타입, 금액(원)·날짜(Asia/Seoul) 유틸
+docker/         Dockerfile, compose 예시, Tailscale serve 설정, .env 예시
+```
+
+- 금액은 모두 원 단위 정수입니다.
+- 시각은 UTC 밀리초로 저장하고, 날짜·월 경계는 한국 시간(Asia/Seoul) 기준으로 계산합니다 (`packages/shared/src/date.ts`).
+
+## 로컬 개발
+
+준비물: Node.js 22.18 이상, pnpm 10 (`corepack enable`이면 `package.json`의 버전이 자동으로 쓰입니다).
+
+```bash
+pnpm install
+pnpm dev          # 서버(http://localhost:3000)와 화면(http://localhost:5173)을 함께 실행
+```
+
+- 브라우저에서 http://localhost:5173 을 엽니다. 화면 개발 서버가 `/api` 요청을 서버로 넘겨 줍니다.
+- 서버는 TypeScript 소스를 Node로 바로 실행하며, 파일을 고치면 다시 시작합니다.
+- 개발용 데이터는 `apps/server/data/`에 생깁니다 (git에 올라가지 않음). 지우면 초기화됩니다.
+- 서버 설정은 환경 변수로 합니다. 개발 중에는 기본값으로 충분하고, 바꾸려면 `apps/server/.env`를 만듭니다. 변수 목록은 [docker/.env.example](docker/.env.example)에 있습니다.
+
+### 검사와 테스트
+
+```bash
+pnpm lint          # ESLint
+pnpm format:check  # Prettier (고치려면 pnpm format)
+pnpm typecheck     # 모든 패키지 타입 검사
+pnpm test          # 단위 테스트 (Vitest)
+pnpm build         # shared → server, web 프로덕션 빌드
+```
+
+### 프로덕션 빌드를 로컬에서 실행
+
+```bash
+pnpm build
+NODE_ENV=production \
+SESSION_SECRET="$(openssl rand -base64 48)" \
+PUBLIC_ORIGIN=http://localhost:3000 \
+DATA_DIR=./data \
+pnpm start
+```
+
+http://localhost:3000 에서 빌드된 화면을, http://localhost:3000/api/health 에서 상태를 볼 수 있습니다.
+
+### DB 스키마 변경
+
+1. `apps/server/src/db/schema.ts`를 고칩니다.
+2. `pnpm db:generate`로 `apps/server/drizzle/`에 마이그레이션 SQL을 만들고 함께 커밋합니다.
+3. 서버는 시작할 때 아직 적용되지 않은 마이그레이션을 자동으로 적용합니다.
+
+기본 분류(지출·수입 2단계)는 시작할 때마다 빠진 것만 채워 넣습니다. 이름을 바꾸거나 보관 처리한 분류는 건드리지 않습니다.
+
+### 백업
+
+- 서버가 매일 `BACKUP_TIME`(한국 시간, 기본 04:00)에 SQLite 온라인 백업으로 `<DATA_DIR>/backups/budget-YYYYMMDDTHHMMSSZ.sqlite`를 만듭니다 (파일명 시각은 UTC).
+- `BACKUP_RETENTION_DAYS`(기본 30일)보다 오래된 백업은 지웁니다. 가장 최근 백업은 항상 남깁니다.
+- 서버가 시작될 때 최근 24시간 안의 백업이 없으면 바로 하나 만듭니다.
+- 지금 바로 백업: 개발 중에는 `pnpm backup`, 컨테이너에서는 `docker exec <앱 컨테이너> node dist/cli/backup.js`.
+- 복원: 앱 컨테이너를 멈추고, 백업 파일을 `budget.sqlite`로 복사한 뒤(`budget.sqlite-wal`, `budget.sqlite-shm`은 삭제) 다시 시작합니다.
+
+### Docker 이미지 직접 빌드
+
+```bash
+docker build -f docker/Dockerfile -t budget-app:local .
+docker run --rm -p 3000:3000 -v "$PWD/data:/data" \
+  -e SESSION_SECRET="$(openssl rand -base64 48)" \
+  -e PUBLIC_ORIGIN=http://localhost:3000 \
+  budget-app:local
+```
+
+컨테이너는 `node`(uid 1000) 사용자로 실행되므로 마운트한 폴더에 그 사용자가 쓸 수 있어야 합니다 (`sudo chown 1000:1000 data`).
+
+## 시놀로지 + Tailscale 배포
+
+GitHub Actions가 `main`에 푸시될 때와 `v1.2.3` 같은 태그를 올릴 때 amd64·arm64 이미지를 만들어 GHCR(`ghcr.io/<소유자>/<저장소>`)에 올립니다. NAS에서는 이미지를 받아 실행만 합니다.
+
+### 1. 사전 준비
+
+1. **Container Manager**: DSM 패키지 센터에서 설치합니다. 지원하지 않는 모델이면 이 방식으로는 배포할 수 없습니다.
+2. **GHCR 이미지 접근**: 저장소가 공개이면 이미지도 공개로 둘 수 있습니다. GitHub의 Packages에서 이미지 공개 여부를 확인하세요. 비공개로 두면 NAS에서 `docker login ghcr.io`(읽기 권한 토큰)가 필요합니다.
+3. **Tailscale**:
+   - 관리 콘솔의 DNS 설정에서 **MagicDNS**와 **HTTPS Certificates**를 켭니다.
+   - Settings → Keys에서 **Auth key**를 만듭니다. 처음 연결할 때만 쓰입니다.
+   - 가족의 모든 기기(아이폰, 아이패드, 맥, PC)에 Tailscale을 설치하고 같은 tailnet에 넣거나, 앱 노드를 공유합니다.
+
+### 2. NAS에 폴더 만들기
+
+File Station에서 예를 들어 `docker/budget` 공유 폴더 아래에 다음 구조를 만듭니다.
+
+```
+docker/budget/
+├ compose.yml           ← docker/compose.example.yml 복사
+├ .env                  ← docker/.env.example 복사 후 수정
+├ tailscale/
+│  ├ serve.json         ← docker/tailscale/serve.json 복사
+│  └ state/             ← 빈 폴더 (Tailscale 노드 정보 저장)
+└ data/                 ← 빈 폴더 (DB와 backups/)
+```
+
+`compose.yml`의 `ghcr.io/twkwun/budget-app` 부분은 `.env`의 `APP_IMAGE`로 바꿀 수 있습니다.
+
+### 3. `.env` 작성
+
+`.env.example`의 설명을 따라 채웁니다. 꼭 바꿔야 하는 값:
+
+| 변수                 | 내용                                                                |
+| -------------------- | ------------------------------------------------------------------- |
+| `TS_AUTHKEY`         | Tailscale auth key                                                  |
+| `TS_HOSTNAME`        | 앱 주소의 앞부분 (예: `budget` → `https://budget.<tailnet>.ts.net`) |
+| `APP_IMAGE`          | `ghcr.io/<GitHub 소유자>/<저장소>` (소문자)                         |
+| `SESSION_SECRET`     | `openssl rand -base64 48`로 만든 임의 문자열                        |
+| `PUBLIC_ORIGIN`      | 실제 접속 주소, 예: `https://budget.<tailnet>.ts.net`               |
+| `APP_UID`, `APP_GID` | `data` 폴더에 쓸 수 있는 사용자 (아래 4단계)                        |
+
+`PUBLIC_ORIGIN`은 2단계부터 패스키에 묶입니다. 주소를 바꾸면 패스키를 다시 등록해야 하므로 처음에 정하고 바꾸지 않습니다.
+
+### 4. 데이터 폴더 권한
+
+앱 컨테이너는 root가 아닌 사용자로 실행됩니다. SSH로 NAS에 접속해 다음 중 하나를 합니다.
+
+- `data` 폴더 소유자를 1000으로 바꾸기: `sudo chown -R 1000:1000 /volume1/docker/budget/data`
+- 또는 `id` 명령으로 확인한 내 계정의 uid/gid를 `.env`의 `APP_UID`, `APP_GID`에 적기
+
+### 5. 프로젝트 만들기
+
+1. Container Manager → **프로젝트** → **생성**.
+2. 경로로 `docker/budget`을 고르고 "기존 compose.yml 사용"을 선택합니다.
+3. 웹 포털 설정은 건너뜁니다 (앱은 Tailscale로만 접속합니다).
+4. 완료하면 이미지를 받아 `app`과 `tailscale` 컨테이너가 시작됩니다. `app`이 healthy가 된 뒤 `tailscale`이 시작됩니다.
+
+SSH로 하려면 같은 폴더에서 `sudo docker compose up -d`.
+
+### 6. 확인
+
+1. Tailscale 관리 콘솔에 `budget` 기기가 보이는지 확인합니다.
+2. Tailscale이 켜진 기기에서 `https://budget.<tailnet>.ts.net/api/health`를 엽니다. `"status":"ok"`가 나오면 됩니다. 첫 접속 때 인증서 발급으로 몇 초 걸릴 수 있습니다.
+3. 같은 주소를 열어 홈 화면에 "서버 연결됨"이 보이는지 확인합니다.
+4. 기기별 설치:
+   - 아이폰·아이패드: Safari → 공유 → **홈 화면에 추가**
+   - 맥: Safari → 파일 → **Dock에 추가**
+   - PC: Chrome·Edge 주소창의 **앱 설치** 아이콘
+
+### 업데이트
+
+Container Manager → 프로젝트 → 해당 프로젝트 → **작업 → 빌드**(이미지 다시 받기) 또는 SSH에서:
+
+```bash
+sudo docker compose pull && sudo docker compose up -d
+```
+
+DB 마이그레이션은 앱이 시작할 때 자동으로 적용됩니다. 업데이트 전에 `data/backups`에 최근 백업이 있는지 확인하세요.
+
+### Hyper Backup
+
+`docker/budget/data/backups` 폴더(또는 `data` 전체)를 Hyper Backup 작업에 포함합니다. 실행 중인 `budget.sqlite` 파일보다 `backups/`의 파일이 일관된 사본입니다.
+
+### 문제 해결
+
+- `tailscale` 컨테이너 로그에 인증 오류: auth key가 만료됐거나 이미 쓰였습니다. 새 키를 넣고 `tailscale/state`를 비운 뒤 다시 시작합니다.
+- 앱이 바로 종료됨: `app` 로그에 `Invalid configuration`과 함께 잘못된 변수가 표시됩니다.
+- `SQLITE_CANTOPEN` 또는 권한 오류: 4단계의 데이터 폴더 권한을 확인합니다.
+
+## 보안 주의
+
+이 저장소는 공개입니다. 실제 문자, 카드사·은행 파일, DB 파일, `.env`, 토큰은 절대 커밋하지 않습니다. 테스트 데이터는 지어낸 값만 씁니다.

@@ -39,7 +39,10 @@ RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile --filter @budget/server...
 COPY packages/shared packages/shared
 COPY apps/server apps/server
-RUN pnpm --filter @budget/shared build \
+RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
+    --mount=type=secret,id=build_ca,required=false \
+    if [ -f /run/secrets/build_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/build_ca; fi; \
+    pnpm --filter @budget/shared build \
  && pnpm --filter @budget/server build \
  && pnpm --filter @budget/server deploy --prod --legacy /out \
  && node -e "require('/out/node_modules/better-sqlite3')(':memory:').close()"

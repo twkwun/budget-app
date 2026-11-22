@@ -1,0 +1,50 @@
+# Budget app + Tailscale sidecar for Synology Container Manager (or any Docker host).
+#
+# 1. Copy this file to compose.yml and .env.example to .env in the same folder.
+# 2. Fill in .env (TS_AUTHKEY, SESSION_SECRET, PUBLIC_ORIGIN, ...).
+# 3. docker compose up -d   (or create a Container Manager "project" from this folder)
+#
+# The app port is not published on the host. The only way in is
+# https://<TS_HOSTNAME>.<tailnet>.ts.net, terminated by `tailscale serve`.
+
+name: budget
+
+services:
+  tailscale:
+    image: tailscale/tailscale:${TAILSCALE_IMAGE_TAG:-stable}
+    hostname: ${TS_HOSTNAME:-budget}
+    restart: unless-stopped
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:?set TS_AUTHKEY in .env}
+      TS_HOSTNAME: ${TS_HOSTNAME:-budget}
+      TS_STATE_DIR: /var/lib/tailscale
+      # Userspace networking: no /dev/net/tun, NET_ADMIN or kernel modules,
+      # which Synology DSM does not provide to containers by default.
+      TS_USERSPACE: 'true'
+      TS_SERVE_CONFIG: /config/serve.json
+      TS_EXTRA_ARGS: ${TS_EXTRA_ARGS:-}
+    volumes:
+      - ${TAILSCALE_STATE_DIR:-./tailscale/state}:/var/lib/tailscale
+      - ./tailscale/serve.json:/config/serve.json:ro
+    depends_on:
+      app:
+        condition: service_healthy
+
+  app:
+    image: ${APP_IMAGE:-ghcr.io/twkwun/budget-app}:${APP_TAG:-latest}
+    restart: unless-stopped
+    init: true
+    # Match the owner of DATA_PATH on the NAS (see README). Default: the image's `node` user.
+    user: '${APP_UID:-1000}:${APP_GID:-1000}'
+    environment:
+      NODE_ENV: production
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?set PUBLIC_ORIGIN in .env}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      BACKUP_ENABLED: ${BACKUP_ENABLED:-true}
+      BACKUP_TIME: ${BACKUP_TIME:-04:00}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
+    volumes:
+      - ${DATA_PATH:-./data}:/data
+    expose:
+      - '3000'
