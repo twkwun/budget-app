@@ -1,0 +1,108 @@
+:root {
+  color-scheme: light dark;
+  --accent: #0f766e;
+  --accent-soft: #ccfbf1;
+  --on-accent: #ffffff;
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface-hover: #f0f2f5;
+  --border: #e3e6ea;
+  --text: #16181d;
+  --text-muted: #5f6673;
+  --ok: #15803d;
+  --warn: #b45309;
+  --error: #b91c1c;
+
+  --sidebar-width: 220px;
+  --tabbar-height: 58px;
+  /* iOS home-screen apps: keep content clear of the notch and home indicator. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Pretendard', 'Noto Sans KR',
+    'Malgun Gothic', 'Segoe UI', sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --accent: #2dd4bf;
+    --accent-soft: #134e4a;
+    --on-accent: #04201d;
+    --bg: #0f1115;
+    --surface: #181b21;
+    --surface-hover: #22262e;
+    --border: #2a2f38;
+    --text: #eceef2;
+    --text-muted: #9aa2b0;
+    --ok: #4ade80;
+    --warn: #fbbf24;
+    --error: #f87171;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  overscroll-behavior-y: none;
+  word-break: keep-all;
+}
+
+h1 {
+  font-size: 1.5rem;
+  margin: 0 0 16px;
+}
+
+h2 {
+  font-size: 1.05rem;
+  margin: 0 0 8px;
+}
+
+button {
+  font: inherit;
+}
+
+.page {
+  max-width: 960px;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Layout switch: bottom tabs on phones, sidebar on iPad/desktop widths. */
+@media (max-width: 719.98px) {
+  .only-wide {
+    display: none !important;
+  }
+}
+@media (min-width: 720px) {
+  .only-narrow {
+    display: none !important;
+  }
+}

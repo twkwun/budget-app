@@ -1,0 +1,12 @@
+**/node_modules
+**/dist
+**/dev-dist
+**/coverage
+**/*.tsbuildinfo
+**/.env
+**/data
+.git
+.github
+docker/tailscale
+docs
+*.md

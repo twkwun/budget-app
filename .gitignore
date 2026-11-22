@@ -1,0 +1,16 @@
+node_modules/
+dist/
+dev-dist/
+coverage/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+# Local data: SQLite files and backups must never be committed.
+data/
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+docker/tailscale/state/
+.DS_Store

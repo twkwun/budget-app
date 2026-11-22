@@ -1,0 +1,25 @@
+{
+  "name": "@budget/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared types and KRW money / Asia/Seoul date helpers",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "@budget/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^5.1.1"
+  }
+}
