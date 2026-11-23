@@ -36,7 +36,18 @@ export type ApiErrorCode =
   | 'category_invalid'
   | 'account_invalid'
   | 'invalid_token'
-  | 'rule_invalid';
+  | 'rule_invalid'
+  | 'import_invalid'
+  | 'undo_conflict'
+  | 'password_required'
+  | 'password_invalid'
+  | 'unsupported_encryption'
+  | 'unsupported_format'
+  | 'file_too_large'
+  | 'too_many_rows'
+  | 'corrupt_file'
+  | 'parse_timeout'
+  | 'no_rows';
 
 export interface ApiErrorBody {
   error: {

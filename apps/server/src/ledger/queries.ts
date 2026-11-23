@@ -27,6 +27,7 @@ import {
   type DayTotal,
   type MonthSummary,
   type TransactionInfo,
+  type TransactionSource,
   type TransactionStatus,
   type TransactionType,
   type YearMonth,
@@ -129,6 +130,9 @@ function selectInfo(db: AppDatabase) {
       accountName: accounts.name,
       ownerName: owner.displayName,
       hasSms: sql<number>`exists (select 1 from ${rawRecords} where ${rawRecords.transactionId} = ${transactions.id} and ${rawRecords.source} = 'sms')`,
+      rawSources: sql<
+        string | null
+      >`(select group_concat(distinct ${rawRecords.source}) from ${rawRecords} where ${rawRecords.transactionId} = ${transactions.id})`,
     })
     .from(transactions)
     .leftJoin(category, eq(transactions.categoryId, category.id))
@@ -138,6 +142,15 @@ function selectInfo(db: AppDatabase) {
 }
 
 type InfoRow = Awaited<ReturnType<ReturnType<typeof selectInfo>['all']>>[number];
+
+function sourcesOf(
+  own: TransactionSource,
+  raw: string | null,
+): { sources: TransactionSource[]; confirmed: boolean } {
+  const set = new Set<TransactionSource>([own]);
+  for (const s of (raw ?? '').split(',')) if (s === 'sms' || s === 'file') set.add(s);
+  return { sources: [...set], confirmed: set.size >= 2 };
+}
 
 function toInfo(r: InfoRow): TransactionInfo {
   const t = r.t;
@@ -166,6 +179,7 @@ function toInfo(r: InfoRow): TransactionInfo {
     installmentMonths: t.installmentMonths,
     isPrivate: t.isPrivate,
     hasSms: Boolean(r.hasSms),
+    ...sourcesOf(t.source, r.rawSources),
     createdAt: t.createdAt.toISOString(),
     updatedAt: t.updatedAt.toISOString(),
   };

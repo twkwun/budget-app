@@ -40,5 +40,13 @@ export type CategoryKind = (typeof CATEGORY_KINDS)[number];
 export const RULE_MATCH_TYPES = ['contains', 'exact', 'prefix'] as const;
 export type RuleMatchType = (typeof RULE_MATCH_TYPES)[number];
 
-export const IMPORT_BATCH_STATUSES = ['previewed', 'applied', 'discarded', 'failed'] as const;
+export const IMPORT_BATCH_STATUSES = [
+  'needs_mapping',
+  'previewed',
+  'applying',
+  'applied',
+  'undone',
+  'discarded',
+  'failed',
+] as const;
 export type ImportBatchStatus = (typeof IMPORT_BATCH_STATUSES)[number];

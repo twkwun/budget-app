@@ -4,6 +4,7 @@ import { ConfigError, loadConfig, type Config } from './config.ts';
 import { openDatabase } from './db/client.ts';
 import { runMigrations } from './db/migrate.ts';
 import { seedDefaultCategories } from './db/seed.ts';
+import { deleteExpiredPreviews } from './importer/service.ts';
 import { backfillMerchantKeys, seedKeywordRules } from './ledger/categorize.ts';
 
 function loadConfigOrExit(): Config {
@@ -41,12 +42,26 @@ const backups = config.backup.enabled
     })
   : null;
 
+// Previews not applied within a day are deleted with their rows (hourly check).
+const sweepImports = () => {
+  try {
+    const n = deleteExpiredPreviews(db, Date.now());
+    if (n) app.log.info({ deleted: n }, 'expired import previews deleted');
+  } catch (error) {
+    app.log.error({ err: error }, 'import preview cleanup failed');
+  }
+};
+sweepImports();
+const importSweeper = setInterval(sweepImports, 60 * 60 * 1000);
+importSweeper.unref();
+
 let shuttingDown = false;
 async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   app.log.info({ signal }, 'shutting down');
   backups?.stop();
+  clearInterval(importSweeper);
   try {
     await app.close();
   } finally {

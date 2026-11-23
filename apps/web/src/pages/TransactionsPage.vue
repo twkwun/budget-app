@@ -291,6 +291,15 @@ function changed(): void {
             <td>
               {{ tx.merchant || '—' }}<span v-if="tx.memo" class="muted"> · {{ tx.memo }}</span>
               <span v-if="tx.hasSms" class="source" title="카드 문자로 등록·확인됨">문자</span>
+              <span v-if="tx.sources.includes('file')" class="source" title="파일로 가져옴"
+                >파일</span
+              >
+              <span
+                v-if="tx.confirmed"
+                class="source confirmed"
+                title="두 곳 이상에서 같은 거래가 확인됨"
+                >확인됨</span
+              >
             </td>
             <td :class="{ uncategorized: !tx.categoryName && tx.type !== 'transfer' }">
               {{ tx.type === 'transfer' ? '이체' : (tx.categoryName ?? '미분류') }}
@@ -449,6 +458,10 @@ function changed(): void {
   color: var(--text-muted);
   font-size: 0.72rem;
   font-weight: 600;
+}
+.source.confirmed {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 .sentinel {
   height: 1px;

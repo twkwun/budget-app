@@ -36,6 +36,9 @@ export interface RequestOptions {
   timeoutMs?: number;
   /** Keep the request alive while the page is being hidden or unloaded. */
   keepalive?: boolean;
+  /** Send this body as-is (a file upload) instead of JSON. */
+  rawBody?: Blob;
+  headers?: Record<string, string>;
 }
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -63,9 +66,12 @@ async function send<T>(
       keepalive: options.keepalive,
       headers: {
         accept: 'application/json',
-        ...(body !== undefined && { 'content-type': 'application/json' }),
+        ...(options.rawBody
+          ? { 'content-type': 'application/octet-stream' }
+          : body !== undefined && { 'content-type': 'application/json' }),
+        ...options.headers,
       },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: options.rawBody ?? (body === undefined ? undefined : JSON.stringify(body)),
       signal: AbortSignal.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
     });
   } catch (cause) {

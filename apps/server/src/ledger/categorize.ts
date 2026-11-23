@@ -1,7 +1,10 @@
 /**
  * Automatic categorisation (DESIGN 6.4), in order:
  *   1. the family's own rules (highest priority first)
- *   2. the category most recently used for the same merchant
+ *   1b. for imported rows: the file's own category, mapped to ours
+ *   2. the category most recently used for the same merchant (by the
+ *      transaction's own time, so importing old history never overrides a
+ *      newer choice)
  *   3. built-in keyword rules
  *   4. none (미분류)
  * Payment intermediaries (네이버페이 etc.) are always left 미분류.
@@ -13,7 +16,7 @@ import { categories, categoryRules, transactions } from '../db/schema.ts';
 import { KEYWORD_RULES } from './keyword-rules.ts';
 
 type Db = Pick<AppDatabase, 'select' | 'insert' | 'update'>;
-export type CategorizeReason = 'rule' | 'history' | 'keyword';
+export type CategorizeReason = 'rule' | 'mapped' | 'history' | 'keyword';
 
 export interface CategorizeResult {
   categoryId: number | null;
@@ -51,22 +54,67 @@ function activeRules(db: Db, kind: 'expense' | 'income', system: boolean) {
     .all();
 }
 
+/**
+ * A categoriser that loads the rule lists once. Use it for bulk work
+ * (imports); `categorize` is the same thing for a single call.
+ */
+export function createCategorizer(db: Db) {
+  const rules = {
+    expense: { user: activeRules(db, 'expense', false), system: activeRules(db, 'expense', true) },
+    income: { user: activeRules(db, 'income', false), system: activeRules(db, 'income', true) },
+  };
+  return (input: Parameters<typeof categorize>[1]): CategorizeResult =>
+    categorizeWith(db, rules, input);
+}
+
+type RuleSet = Record<
+  'expense' | 'income',
+  { user: ReturnType<typeof activeRules>; system: ReturnType<typeof activeRules> }
+>;
+
 export function categorize(
   db: Db,
-  input: { merchant: string | null | undefined; type: string; viewerId: number },
+  input: {
+    merchant: string | null | undefined;
+    type: string;
+    viewerId: number;
+    /** Category the source file assigned, already mapped to ours. */
+    mappedCategoryId?: number | null;
+  },
+): CategorizeResult {
+  if (input.type !== 'expense' && input.type !== 'income')
+    return { categoryId: null, reason: null };
+  const kind = input.type;
+  return categorizeWith(
+    db,
+    {
+      [kind]: { user: activeRules(db, kind, false), system: activeRules(db, kind, true) },
+    } as RuleSet,
+    input,
+  );
+}
+
+function categorizeWith(
+  db: Db,
+  rules: RuleSet,
+  input: Parameters<typeof categorize>[1],
 ): CategorizeResult {
   const none: CategorizeResult = { categoryId: null, reason: null };
-  if (!input.merchant || (input.type !== 'expense' && input.type !== 'income')) return none;
-  if (isAggregatorMerchant(input.merchant)) return none;
+  if (input.type !== 'expense' && input.type !== 'income') return none;
+  const mapped = input.mappedCategoryId
+    ? ({ categoryId: input.mappedCategoryId, reason: 'mapped' } as const)
+    : null;
+  if (!input.merchant || isAggregatorMerchant(input.merchant)) return mapped ?? none;
   const key = normalizeMerchant(input.merchant);
-  if (!key) return none;
+  if (!key) return mapped ?? none;
   const kind = input.type;
 
-  for (const rule of activeRules(db, kind, false)) {
+  for (const rule of rules[kind].user) {
     if (ruleMatches(rule.matchType, rule.pattern, key)) {
       return { categoryId: rule.categoryId, reason: 'rule', ruleId: rule.id };
     }
   }
+  if (mapped) return mapped;
 
   const previous = db
     .select({ categoryId: transactions.categoryId })
@@ -85,7 +133,7 @@ export function categorize(
     .get();
   if (previous?.categoryId) return { categoryId: previous.categoryId, reason: 'history' };
 
-  for (const rule of activeRules(db, kind, true)) {
+  for (const rule of rules[kind].system) {
     if (ruleMatches(rule.matchType, rule.pattern, key)) {
       return { categoryId: rule.categoryId, reason: 'keyword', ruleId: rule.id };
     }

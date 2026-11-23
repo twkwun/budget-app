@@ -51,6 +51,11 @@ export default tseslint.config(
     },
   },
   {
+    // Binary format readers index into record structures they just validated.
+    files: ['apps/server/src/importer/containers/**/*.ts'],
+    rules: { '@typescript-eslint/no-non-null-assertion': 'off' },
+  },
+  {
     files: ['**/test/**/*.ts'],
     rules: { '@typescript-eslint/no-non-null-assertion': 'off', 'no-console': 'off' },
   },

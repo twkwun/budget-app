@@ -25,8 +25,11 @@
     "@fastify/static": "^10.1.12",
     "@simplewebauthn/server": "^14.1.0",
     "better-sqlite3": "^13.2.0",
+    "cfb": "^1.2.2",
     "drizzle-orm": "^0.45.4",
     "fastify": "^5.12.8",
+    "fflate": "^0.8.3",
+    "iconv-lite": "^0.7.3",
     "zod": "^4.6.7"
   },
   "devDependencies": {

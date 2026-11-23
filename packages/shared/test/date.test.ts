@@ -55,6 +55,23 @@ describe('household time zone (Asia/Seoul)', () => {
     expect(zonedTimeToUtc(toZonedParts(instant))).toBe(instant);
   });
 
+  it('agrees with Intl on both sides of the 1988 fast-path boundary', () => {
+    const fmt = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Seoul',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    for (const iso of [
+      '1987-07-01T00:00:00Z',
+      '1988-10-08T14:00:00Z',
+      '1988-10-09T00:00:00Z',
+      '2030-03-01T15:00:00Z',
+    ]) {
+      expect(toLocalDate(Date.parse(iso)), iso).toBe(fmt.format(Date.parse(iso)));
+    }
+  });
+
   it('accepts Date objects and rejects invalid instants', () => {
     expect(toLocalDate(new Date('2026-01-01T00:00:00+09:00'))).toBe('2026-01-01');
     expect(() => toLocalDate(Number.NaN)).toThrow(RangeError);

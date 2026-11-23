@@ -119,6 +119,10 @@ export interface TransactionInfo {
   isPrivate: boolean;
   /** A card message (문자) is linked to this transaction. */
   hasSms: boolean;
+  /** Every source that reported this transaction (manual, sms, file). */
+  sources: TransactionSource[];
+  /** 확인됨: more than one independent source agrees. */
+  confirmed: boolean;
   createdAt: string;
   updatedAt: string;
 }

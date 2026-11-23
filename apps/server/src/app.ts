@@ -15,6 +15,7 @@ import { accountRoutes } from './routes/accounts.ts';
 import { authRoutes } from './routes/auth.ts';
 import { categoryRoutes } from './routes/categories.ts';
 import { healthRoutes } from './routes/health.ts';
+import { importRoutes } from './routes/imports.ts';
 import { inboxRoutes } from './routes/inbox.ts';
 import { meRoutes } from './routes/me.ts';
 import { memberRoutes } from './routes/members.ts';
@@ -146,6 +147,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       await api.register(ruleRoutes(ctx));
       await api.register(inboxRoutes(ctx));
       await api.register(webhookRoutes(ctx));
+      await api.register(importRoutes(ctx));
     },
     { prefix: '/api' },
   );

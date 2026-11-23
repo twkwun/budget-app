@@ -22,6 +22,8 @@ export interface AppContext {
     webhookByIp: RateLimiter;
     /** SMS webhook, keyed by token id. */
     webhookByToken: RateLimiter;
+    /** File uploads, keyed by user. */
+    importsByUser: RateLimiter;
   };
   webauthn: {
     rpName: string;
@@ -52,6 +54,7 @@ export function createContext(options: ContextOptions): AppContext {
       byLoginName: new RateLimiter(10, 15 * 60 * 1000, now),
       webhookByIp: new RateLimiter(120, 10 * 60 * 1000, now),
       webhookByToken: new RateLimiter(60, 10 * 60 * 1000, now),
+      importsByUser: new RateLimiter(20, 10 * 60 * 1000, now),
     },
     webauthn: {
       rpName: '가계부',

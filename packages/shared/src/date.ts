@@ -62,12 +62,32 @@ function pad(value: number, length = 2): string {
   return String(value).padStart(length, '0');
 }
 
+/**
+ * Korea has used a fixed UTC+9 with no daylight saving since 1988-10-09, so
+ * instants after that are converted arithmetically (much faster than Intl,
+ * which matters when importing tens of thousands of rows).
+ */
+const KST_FIXED_SINCE = Date.UTC(1988, 9, 9);
+const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+
 /** Wall-clock parts of an instant in the given zone (seconds precision). */
 export function toZonedParts(
   instant: Date | number,
   timeZone: string = HOUSEHOLD_TIME_ZONE,
 ): LocalDateTimeParts {
-  const parts = formatterFor(timeZone).formatToParts(toEpochMs(instant));
+  const ms = toEpochMs(instant);
+  if (timeZone === HOUSEHOLD_TIME_ZONE && ms >= KST_FIXED_SINCE) {
+    const d = new Date(ms + KST_OFFSET_MS);
+    return {
+      year: d.getUTCFullYear(),
+      month: d.getUTCMonth() + 1,
+      day: d.getUTCDate(),
+      hour: d.getUTCHours(),
+      minute: d.getUTCMinutes(),
+      second: d.getUTCSeconds(),
+    };
+  }
+  const parts = formatterFor(timeZone).formatToParts(ms);
   const get = (type: Intl.DateTimeFormatPartTypes): number => {
     const part = parts.find((p) => p.type === type);
     if (!part) throw new Error(`Missing ${type} in formatted date`);
@@ -110,6 +130,9 @@ export function zonedTimeToUtc(
     local.minute ?? 0,
     local.second ?? 0,
   );
+  if (timeZone === HOUSEHOLD_TIME_ZONE && naive - KST_OFFSET_MS >= KST_FIXED_SINCE) {
+    return naive - KST_OFFSET_MS;
+  }
   // Two passes handle zones whose offset differs on either side of the instant.
   const firstGuess = naive - timeZoneOffsetMs(naive, timeZone);
   return naive - timeZoneOffsetMs(firstGuess, timeZone);

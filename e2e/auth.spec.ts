@@ -238,33 +238,34 @@ test('SMS webhook: token, two messages, 인박스 rule, automatic categorisation
   const url = (await page.getByTestId('webhook-url').textContent())?.trim() ?? '';
   expect(url).toMatch(/\/api\/webhook\/sms$/);
 
-  // Messages dated "now" in Asia/Seoul so they land in the current month.
-  const now = new Date();
-  const kst = new Date(now.getTime() + 9 * 3600_000);
-  // Date and time from the same instant, so a run at 00:01 KST cannot mix days.
-  const stamp = (minutesAgo: number) => {
-    const t = new Date(kst.getTime() - minutesAgo * 60_000);
-    const p = (n: number) => String(n).padStart(2, '0');
-    return `${p(t.getUTCMonth() + 1)}/${p(t.getUTCDate())} ${p(t.getUTCHours())}:${p(t.getUTCMinutes())}`;
-  };
-  const send = async (amount: string, when: string, merchant: string, secondsAgo: number) => {
+  // Fixed past dates (Asia/Seoul) so the test never depends on today's date.
+  const MONTH = '2026-03';
+  const at = (day: number, hh: number, mm: number) => ({
+    when: `03/${String(day).padStart(2, '0')} ${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`,
+    receivedAt: new Date(Date.UTC(2026, 2, day, hh - 9, mm, 20)).toISOString(),
+  });
+  const send = async (
+    amount: string,
+    t: { when: string; receivedAt: string },
+    merchant: string,
+  ) => {
     const res = await page.request.post(url, {
       headers: { authorization: `Bearer ${token}` },
       data: {
-        text: `[Web발신]\n신한카드(4321)승인 테*트 ${amount}원(일시불)${when} ${merchant} 누적100,000원`,
-        receivedAt: new Date(now.getTime() - secondsAgo * 1000).toISOString(),
+        text: `[Web발신]\n신한카드(4321)승인 테*트 ${amount}원(일시불)${t.when} ${merchant} 누적100,000원`,
+        receivedAt: t.receivedAt,
       },
     });
     expect(res.ok()).toBe(true);
     return (await res.json()) as { result: string; transactionId: number };
   };
-  const cafe = await send('5,500', stamp(3), '구름카페 강남점', 170);
-  const craft = await send('32,000', stamp(2), '솔방울공방', 110);
+  const cafe = await send('5,500', at(14, 9, 10), '구름카페 강남점');
+  const craft = await send('32,000', at(14, 11, 30), '솔방울공방');
   expect(cafe.result).toBe('created');
   expect(craft.result).toBe('created');
 
   // Both appear in 내역 with the 문자 badge; the café was categorised by keyword.
-  await page.goto('/transactions');
+  await page.goto(`/transactions?month=${MONTH}`);
   const cafeRow = page.getByTestId('tx-row').filter({ hasText: '구름카페 강남점' });
   await expect(cafeRow).toContainText('식비 > 카페·간식');
   await expect(cafeRow.getByTestId('source-sms')).toBeVisible();
@@ -282,11 +283,101 @@ test('SMS webhook: token, two messages, 인박스 rule, automatic categorisation
   await expect(page.getByTestId('inbox-item').filter({ hasText: '솔방울공방' })).toHaveCount(0);
 
   // A third message from the same merchant is categorised automatically.
-  const third = await send('18,000', stamp(1), '솔방울공방', 50);
+  const third = await send('18,000', at(15, 16, 45), '솔방울공방');
   const tx = await (await page.request.get(`/api/transactions/${third.transactionId}`)).json();
   expect(tx.categoryName).toBe('문화·여가 > 취미');
-  await page.goto('/transactions');
+  await page.goto(`/transactions?month=${MONTH}`);
   await expect(page.getByTestId('tx-row').filter({ hasText: '18,000원' })).toContainText(
     '문화·여가 > 취미',
   );
+});
+
+test('file import: password, payment-method mapping, 확인됨 with SMS, re-import adds nothing', async ({
+  page,
+}) => {
+  const { encryptXlsx, makeBanksalad } = await import('../apps/server/test/support/files.ts');
+  await page.goto('/login');
+  await page.getByTestId('login-name').fill(ADMIN.login);
+  await page.getByTestId('login-password').fill(ADMIN.password);
+  await page.getByRole('button', { name: '비밀번호로 로그인' }).click();
+  await expect(page).toHaveURL(/\/$/);
+  const origin = new URL(page.url()).origin;
+
+  // A card, and an SMS for one purchase that the file also contains.
+  const account = await (
+    await page.request.post('/api/accounts', {
+      headers: { origin },
+      data: { kind: 'card', name: '신한 생활카드', issuer: 'shinhan', last4: '4321' },
+    })
+  ).json();
+  const token = (
+    await (
+      await page.request.post('/api/me/webhook-tokens', {
+        headers: { origin },
+        data: { deviceName: 'e2e' },
+      })
+    ).json()
+  ).token;
+  const sms = await page.request.post('/api/webhook/sms', {
+    headers: { authorization: `Bearer ${token}` },
+    data: {
+      text: '신한카드(4321)승인 테*트 5,500원(일시불)04/02 12:30 구름카페강남점',
+      receivedAt: '2026-04-02T03:31:00.000Z',
+    },
+  });
+  expect((await sms.json()).result).toBe('created');
+
+  const rows = [
+    [
+      '2026-04-02',
+      '12:30',
+      '지출',
+      '식비',
+      '카페',
+      '구름카페 강남점',
+      -5500,
+      'KRW',
+      '생활비카드',
+      '',
+    ],
+    ['2026-04-03', '19:00', '지출', '식비', '외식', '달빛분식', -12000, 'KRW', '생활비카드', ''],
+    ['2026-04-05', '09:00', '수입', '급여', '', '회사급여', 2500000, 'KRW', '생활비 통장', ''],
+  ];
+  const file = {
+    name: '뱅크샐러드_2026.xlsx',
+    mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    buffer: encryptXlsx(makeBanksalad(rows), '0402e2e', 2000),
+  };
+
+  const uploadWithPassword = async () => {
+    await page.goto('/import');
+    await page.getByTestId('file-input').setInputFiles(file);
+    await expect(page.getByTestId('import-password')).toBeVisible();
+    await page.getByTestId('import-password-input').fill('0402e2e');
+    await page.getByTestId('import-password-submit').click();
+    await expect(page.getByTestId('import-summary')).toBeVisible();
+  };
+
+  await uploadWithPassword();
+  // '생활비카드' has no issuer or digits: nothing is suggested until it is mapped.
+  const select = page.getByTestId('account-map-생활비카드');
+  await expect(select).toHaveValue('');
+  await select.selectOption(String(account.id));
+  await expect(page.getByTestId('count-duplicate')).toHaveText('중복 1');
+  await expect(page.getByTestId('count-new')).toHaveText('신규 2');
+  await page.getByTestId('import-apply').click();
+  await expect(page.getByTestId('result-created')).toHaveText('2건');
+  await expect(page.getByTestId('result-attached')).toHaveText('1건');
+
+  await page.goto('/transactions?month=2026-04');
+  const cafe = page.getByTestId('tx-row').filter({ hasText: '구름카페' });
+  await expect(cafe).toHaveCount(1);
+  await expect(cafe.getByTestId('confirmed')).toBeVisible();
+  await expect(page.getByTestId('tx-row')).toHaveCount(3);
+
+  // The same file again: everything is 이미 가져옴, nothing to apply.
+  await uploadWithPassword();
+  await expect(page.getByTestId('count-already')).toHaveText('이미 가져옴 3');
+  await expect(page.getByTestId('count-new')).toHaveCount(0);
+  await expect(page.getByTestId('import-apply')).toBeDisabled();
 });

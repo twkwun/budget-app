@@ -258,7 +258,7 @@ export function processRawRecord(
       occurredAt,
       accountId: account?.id ?? null,
       merchant: v.merchant,
-      source: 'sms',
+      excludeLinkedSource: 'sms',
       viewerId: userId,
     });
     if (dup.kind === 'match') {

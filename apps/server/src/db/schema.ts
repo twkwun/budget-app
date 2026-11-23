@@ -260,14 +260,60 @@ export const importBatches = sqliteTable(
     duplicateCount: integer('duplicate_count').notNull().default(0),
     reviewCount: integer('review_count').notNull().default(0),
     failedCount: integer('failed_count').notNull().default(0),
+    /** Rows already imported by an earlier batch (skipped). */
+    skippedCount: integer('skipped_count').notNull().default(0),
+    rowCount: integer('row_count').notNull().default(0),
+    /** Container read: xlsx, xls, csv or html. */
+    container: text('container'),
+    sheetName: text('sheet_name'),
+    /** Header cells of the detected header row and their signature (for remembered mappings). */
+    header: text('header', { mode: 'json' }).$type<string[]>(),
+    headerSignature: text('header_signature'),
+    columnMap: text('column_map', { mode: 'json' }).$type<Record<string, number>>(),
+    /** Applied result: created/attached/cancelled/skipped counts. */
+    result: text('result', { mode: 'json' }).$type<Record<string, number>>(),
     createdAt: createdAt(),
     appliedAt: timestamp('applied_at'),
+    /** Previews not applied by this time are deleted with their rows. */
+    expiresAt: timestamp('expires_at'),
+    undoneAt: timestamp('undone_at'),
   },
   (t) => [
     index('import_batches_user_idx').on(t.userId),
     index('import_batches_file_idx').on(t.fileSha256),
   ],
 );
+
+/** Remembered column mapping per header signature (file layout). */
+export const importProfiles = sqliteTable('import_profiles', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  headerSignature: text('header_signature').notNull().unique(),
+  columnMap: text('column_map', { mode: 'json' }).$type<Record<string, number>>().notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+/** Remembered 결제수단 label → account (null = no account). */
+export const importAccountMappings = sqliteTable('import_account_mappings', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  label: text('label').notNull().unique(),
+  accountId: integer('account_id').references(() => accounts.id, { onDelete: 'cascade' }),
+  createdByUserId: integer('created_by_user_id').references(() => users.id, {
+    onDelete: 'set null',
+  }),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+/** Remembered source category (e.g. 뱅크샐러드 대분류/소분류) → our category (null = 미분류). */
+export const importCategoryMappings = sqliteTable('import_category_mappings', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  /** `kind:대분류/소분류` */
+  key: text('key').notNull().unique(),
+  categoryId: integer('category_id').references(() => categories.id, { onDelete: 'cascade' }),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
 
 export const transactions = sqliteTable(
   'transactions',
@@ -369,6 +415,7 @@ export const rawRecords = sqliteTable(
     index('raw_records_status_idx').on(t.status),
     index('raw_records_issue_idx').on(t.issue, t.resolvedAt),
     index('raw_records_token_hash_idx').on(t.webhookTokenId, t.contentHash),
+    index('raw_records_source_hash_idx').on(t.source, t.contentHash),
     index('raw_records_transaction_idx').on(t.transactionId),
     index('raw_records_hash_idx').on(t.contentHash),
     index('raw_records_batch_idx').on(t.importBatchId),

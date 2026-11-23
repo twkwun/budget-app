@@ -24,6 +24,14 @@ defineEmits<{ open: [] }>();
           title="카드 문자로 등록·확인됨"
           >문자</span
         >
+        <span v-if="tx.sources.includes('file')" class="source" title="파일로 가져옴">파일</span>
+        <span
+          v-if="tx.confirmed"
+          class="source confirmed"
+          data-testid="confirmed"
+          title="두 곳 이상에서 같은 거래가 확인됨"
+          >확인됨</span
+        >
       </span>
       <span class="sub">
         <span v-if="tx.type !== 'transfer'" :class="{ uncategorized: !tx.categoryName }">{{
@@ -90,6 +98,10 @@ defineEmits<{ open: [] }>();
   font-size: 0.7rem;
   font-weight: 600;
   vertical-align: 2px;
+}
+.source.confirmed {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 .uncategorized {
   color: var(--warn);

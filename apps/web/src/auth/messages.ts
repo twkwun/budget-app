@@ -1,3 +1,4 @@
+import { IMPORT_ERROR_MESSAGES } from '@budget/shared';
 import { ApiError } from '../api/client.ts';
 
 const MESSAGES: Record<string, string> = {
@@ -18,8 +19,13 @@ const MESSAGES: Record<string, string> = {
 
 /** Korean message for an error from the API client or WebAuthn. */
 export function errorMessage(error: unknown): string {
-  if (error instanceof ApiError)
-    return MESSAGES[error.code] ?? '문제가 발생했습니다. 다시 시도하세요.';
+  if (error instanceof ApiError) {
+    return (
+      MESSAGES[error.code] ??
+      IMPORT_ERROR_MESSAGES[error.code] ??
+      '문제가 발생했습니다. 다시 시도하세요.'
+    );
+  }
   if (error instanceof Error) {
     if (error.name === 'NotAllowedError' || error.name === 'AbortError') {
       return '패스키 인증이 취소되었거나 시간이 지났습니다.';
