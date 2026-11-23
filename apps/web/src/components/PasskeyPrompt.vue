@@ -2,12 +2,14 @@
 import { ref } from 'vue';
 import { errorMessage, isPasskeyCancel } from '../auth/messages.ts';
 import { passkeysSupported, registerPasskey } from '../auth/passkey.ts';
+import { biometricName, withRo } from '../auth/platform.ts';
 
 const emit = defineEmits<{ done: [added: boolean] }>();
 const busy = ref(false);
 const error = ref('');
 const added = ref<{ synced: boolean } | null>(null);
 const supported = passkeysSupported();
+const biometric = biometricName();
 
 async function add(): Promise<void> {
   busy.value = true;
@@ -37,7 +39,10 @@ async function add(): Promise<void> {
       <button type="button" class="btn btn-primary" @click="emit('done', true)">시작하기</button>
     </template>
     <template v-else-if="supported">
-      <p>비밀번호 대신 <strong>Face ID</strong>로 로그인하려면 이 기기에 패스키를 추가하세요.</p>
+      <p>
+        비밀번호 대신 <strong>{{ withRo(biometric) }}</strong> 로그인하려면 이 기기에 패스키를
+        추가하세요.
+      </p>
       <button type="button" class="btn btn-primary" :disabled="busy" @click="add">
         패스키 추가
       </button>

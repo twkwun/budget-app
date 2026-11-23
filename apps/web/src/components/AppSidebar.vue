@@ -4,6 +4,8 @@ import { NAV_ITEMS } from '../nav.ts';
 import AppIcon from './AppIcon.vue';
 
 const route = useRoute();
+const isActive = (name: string) =>
+  route.name === name || String(route.name ?? '').startsWith(`${name}-`);
 </script>
 
 <template>
@@ -17,8 +19,8 @@ const route = useRoute();
         <RouterLink
           :to="item.path"
           class="link"
-          :class="{ active: route.name === item.name }"
-          :aria-current="route.name === item.name ? 'page' : undefined"
+          :class="{ active: isActive(item.name) }"
+          :aria-current="isActive(item.name) ? 'page' : undefined"
         >
           <AppIcon :name="item.icon" :size="20" />
           <span>{{ item.label }}</span>

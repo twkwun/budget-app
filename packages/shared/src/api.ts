@@ -31,7 +31,10 @@ export type ApiErrorCode =
   | 'last_admin'
   | 'invite_invalid'
   | 'challenge_invalid'
-  | 'passkey_invalid';
+  | 'passkey_invalid'
+  | 'category_name_taken'
+  | 'category_invalid'
+  | 'account_invalid';
 
 export interface ApiErrorBody {
   error: {

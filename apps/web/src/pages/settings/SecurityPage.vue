@@ -158,8 +158,8 @@ const revokeOthers = () =>
     <h2 class="section-title">앱 잠금</h2>
     <div class="card stack">
       <p class="muted small">
-        마지막으로 사용한 뒤 이 시간이 지나면 잠기고, Face ID나 비밀번호로 풀어야 합니다. ‘즉시’는
-        앱을 다른 앱으로 전환하는 순간 잠급니다.
+        마지막으로 사용한 뒤 이 시간이 지나면 잠기고, 패스키(Face ID·Touch ID 등)나 비밀번호로
+        풀어야 합니다. ‘즉시’는 앱을 다른 앱으로 전환하는 순간 잠급니다.
       </p>
       <label class="field">
         <span>잠금 시간</span>

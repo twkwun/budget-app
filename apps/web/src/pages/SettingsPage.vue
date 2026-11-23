@@ -4,9 +4,8 @@ import { useAuthStore } from '../stores/auth.ts';
 
 const auth = useAuthStore();
 const later = [
-  { label: '카드·계좌', stage: '3단계' },
   { label: '문자 전달 토큰', stage: '4단계' },
-  { label: '분류·규칙', stage: '3단계' },
+  { label: '분류 규칙', stage: '4단계' },
   { label: '예산', stage: '6단계' },
   { label: '백업', stage: '이후 단계' },
 ];
@@ -20,6 +19,20 @@ const later = [
         <RouterLink to="/settings/security" class="row" data-testid="settings-security-link">
           <span>보안</span>
           <span class="muted small">패스키, 잠금, 비밀번호, 로그인 기기</span>
+          <AppIcon name="chevron" :size="18" class="chevron" />
+        </RouterLink>
+      </li>
+      <li>
+        <RouterLink to="/settings/accounts" class="row" data-testid="settings-accounts-link">
+          <span>카드·계좌</span>
+          <span class="muted small">결제 수단, 결제일, 실제 사용자</span>
+          <AppIcon name="chevron" :size="18" class="chevron" />
+        </RouterLink>
+      </li>
+      <li>
+        <RouterLink to="/settings/categories" class="row" data-testid="settings-categories-link">
+          <span>분류</span>
+          <span class="muted small">지출·수입 분류 추가, 이름 변경, 정리</span>
           <AppIcon name="chevron" :size="18" class="chevron" />
         </RouterLink>
       </li>

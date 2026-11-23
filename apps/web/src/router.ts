@@ -62,6 +62,18 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '보안' },
   },
   {
+    path: '/settings/accounts',
+    name: 'settings-accounts',
+    component: () => import('./pages/settings/AccountsPage.vue'),
+    meta: { title: '카드·계좌' },
+  },
+  {
+    path: '/settings/categories',
+    name: 'settings-categories',
+    component: () => import('./pages/settings/CategoriesPage.vue'),
+    meta: { title: '분류' },
+  },
+  {
     path: '/settings/members',
     name: 'settings-members',
     component: () => import('./pages/settings/MembersPage.vue'),

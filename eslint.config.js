@@ -52,7 +52,7 @@ export default tseslint.config(
   },
   {
     files: ['**/test/**/*.ts'],
-    rules: { '@typescript-eslint/no-non-null-assertion': 'off' },
+    rules: { '@typescript-eslint/no-non-null-assertion': 'off', 'no-console': 'off' },
   },
   {
     files: ['apps/server/src/cli/**/*.ts', 'apps/server/src/logger.ts'],

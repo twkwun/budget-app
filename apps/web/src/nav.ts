@@ -36,6 +36,7 @@ export const MORE_ITEMS: readonly NavItem[] = NAV_ITEMS.filter((item) => !TAB_NA
 /** Which tab should look active for the given route name. */
 export function activeTabFor(routeName: string | null | undefined): string {
   if (!routeName) return '';
+  if (routeName.startsWith('settings-')) return 'more';
   if (TAB_NAMES.has(routeName)) return routeName;
   return MORE_ITEMS.some((item) => item.name === routeName) ? 'more' : '';
 }

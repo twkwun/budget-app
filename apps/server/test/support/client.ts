@@ -2,6 +2,7 @@ import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
 import { TEST_SCRYPT_PARAMS } from '../../src/auth/password.ts';
 import { buildApp } from '../../src/app.ts';
 import type { RouteAccess } from '../../src/auth/guard.ts';
+import { seedDefaultCategories } from '../../src/db/seed.ts';
 import { migratedDatabase, testConfig } from '../helpers.ts';
 
 export const ORIGIN = 'http://localhost:5173';
@@ -36,7 +37,7 @@ export class TestClient {
   }
 
   async request(
-    method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+    method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE',
     url: string,
     body?: unknown,
   ): Promise<LightMyRequestResponse> {
@@ -63,6 +64,7 @@ export class TestClient {
   get = (url: string) => this.request('GET', url);
   post = (url: string, body: unknown = {}) => this.request('POST', url, body);
   patch = (url: string, body: unknown) => this.request('PATCH', url, body);
+  put = (url: string, body: unknown) => this.request('PUT', url, body);
   delete = (url: string) => this.request('DELETE', url);
 }
 
@@ -70,6 +72,7 @@ export async function startTestApp(env: Record<string, string> = {}) {
   const clock = new Clock();
   const config = testConfig({ PUBLIC_ORIGIN: ORIGIN, ...env });
   const { db, sqlite } = migratedDatabase(config.dataDir);
+  seedDefaultCategories(db);
   const routeAccess: RouteAccess[] = [];
   const app = await buildApp({
     routeAccess,

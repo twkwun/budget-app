@@ -84,7 +84,7 @@ async function send<T>(
 
 /** JSON request to /api with central handling of unauthenticated / locked / reauth. */
 export async function request<T>(
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+  method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE',
   path: string,
   body?: unknown,
   options: RequestOptions = {},
@@ -111,6 +111,8 @@ export const api = {
     request<T>('POST', path, body, options),
   patch: <T>(path: string, body: unknown, options?: RequestOptions) =>
     request<T>('PATCH', path, body, options),
+  put: <T>(path: string, body: unknown, options?: RequestOptions) =>
+    request<T>('PUT', path, body, options),
   delete: <T>(path: string, options?: RequestOptions) =>
     request<T>('DELETE', path, undefined, options),
 };

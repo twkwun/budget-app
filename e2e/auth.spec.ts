@@ -165,3 +165,57 @@ test('password login, wrong password and recovery link', async ({ page }) => {
   await page.getByRole('button', { name: '비밀번호로 로그인' }).click();
   await expect(page).toHaveURL(/\/settings\/security$/);
 });
+
+test('fast entry, list, home total, edit and delete', async ({ page }) => {
+  page.on('dialog', (d) => void d.accept());
+  await page.goto('/login');
+  await page.getByTestId('login-name').fill(ADMIN.login);
+  await page.getByTestId('login-password').fill(ADMIN.password);
+  await page.getByRole('button', { name: '비밀번호로 로그인' }).click();
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByTestId('kpi-expense').locator('.value')).toHaveText('0원');
+
+  // 금액 → 분류 → 저장
+  await page.goto('/add');
+  for (const key of ['1', '2', '3', '0', '0']) await page.getByTestId(`key-${key}`).click();
+  await expect(page.getByTestId('amount-display')).toHaveText('12,300원');
+  await page.getByTestId('amount-next').click();
+  await page.getByRole('button', { name: '식비', exact: true }).click();
+  await page.getByRole('button', { name: '외식', exact: true }).click();
+  await page.getByTestId('entry-merchant').fill('테스트분식');
+  // A new user has no account yet: offer a cash account.
+  await page.getByTestId('create-cash').click();
+  await expect(page.getByTestId('entry-account')).toHaveValue(/\d+/);
+  await page.getByTestId('entry-save').click();
+  await expect(page.getByTestId('saved-notice')).toContainText('식비 > 외식');
+  // Ready for the next entry.
+  await expect(page.getByTestId('amount-display')).toHaveText('0원');
+
+  // 내역
+  await page.goto('/transactions');
+  const row = page.getByTestId('tx-row').filter({ hasText: '테스트분식' });
+  await expect(row).toContainText('-12,300원');
+  await expect(row).toContainText('식비 > 외식');
+
+  // 홈 total
+  await page.goto('/');
+  await expect(page.getByTestId('kpi-expense').locator('.value')).toHaveText('12,300원');
+  await expect(page.getByTestId('category-list')).toContainText('식비');
+
+  // Edit the category.
+  await page.goto('/transactions');
+  await page.getByTestId('tx-row').filter({ hasText: '테스트분식' }).click();
+  await page.getByTestId('edit-category').selectOption({ label: '장보기' });
+  await page.getByTestId('edit-save').click();
+  await expect(page.getByTestId('edit-sheet')).toBeHidden();
+  await expect(page.getByTestId('tx-row').filter({ hasText: '테스트분식' })).toContainText(
+    '식비 > 장보기',
+  );
+
+  // Delete it.
+  await page.getByTestId('tx-row').filter({ hasText: '테스트분식' }).click();
+  await page.getByTestId('edit-delete').click();
+  await expect(page.getByTestId('empty-list')).toBeVisible();
+  await page.goto('/');
+  await expect(page.getByTestId('kpi-expense').locator('.value')).toHaveText('0원');
+});

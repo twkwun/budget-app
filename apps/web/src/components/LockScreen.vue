@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useAuthStore } from '../stores/auth.ts';
+import { biometricName, withRo } from '../auth/platform.ts';
 import VerifyIdentity from './VerifyIdentity.vue';
 
 const auth = useAuthStore();
@@ -17,7 +18,7 @@ const auth = useAuthStore();
       <img src="/favicon.svg" alt="" width="56" height="56" />
       <h1 id="lock-title">잠겨 있습니다</h1>
       <p class="muted">{{ auth.user?.displayName }}님, 본인 확인 후 계속하세요.</p>
-      <VerifyIdentity passkey-label="Face ID로 잠금 해제" />
+      <VerifyIdentity :passkey-label="`${withRo(biometricName())} 잠금 해제`" />
       <button type="button" class="link-button logout" @click="auth.logout()">로그아웃</button>
     </div>
   </div>

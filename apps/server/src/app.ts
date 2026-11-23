@@ -11,12 +11,15 @@ import type { Config } from './config.ts';
 import { createContext } from './context.ts';
 import type { AppDatabase } from './db/client.ts';
 import { HttpError } from './http/errors.ts';
+import { accountRoutes } from './routes/accounts.ts';
 import { authRoutes } from './routes/auth.ts';
+import { categoryRoutes } from './routes/categories.ts';
 import { healthRoutes } from './routes/health.ts';
 import { meRoutes } from './routes/me.ts';
 import { memberRoutes } from './routes/members.ts';
 import { passkeyRoutes } from './routes/passkeys.ts';
 import { setupRoutes } from './routes/setup.ts';
+import { transactionRoutes } from './routes/transactions.ts';
 import { hasWebBuild, registerWebApp } from './static.ts';
 
 export interface BuildAppOptions {
@@ -134,6 +137,9 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       await api.register(meRoutes(ctx));
       await api.register(passkeyRoutes(ctx));
       await api.register(memberRoutes(ctx));
+      await api.register(accountRoutes(ctx));
+      await api.register(categoryRoutes(ctx));
+      await api.register(transactionRoutes(ctx));
     },
     { prefix: '/api' },
   );

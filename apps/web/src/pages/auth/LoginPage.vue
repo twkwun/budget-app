@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import AuthLayout from '../../components/AuthLayout.vue';
 import { errorMessage, isPasskeyCancel } from '../../auth/messages.ts';
 import { passkeysSupported } from '../../auth/passkey.ts';
+import { biometricName, withRo } from '../../auth/platform.ts';
 import { safeRedirect } from '../../router.ts';
 import { useAuthStore } from '../../stores/auth.ts';
 
@@ -15,6 +16,7 @@ const password = ref('');
 const busy = ref(false);
 const error = ref('');
 const supported = passkeysSupported();
+const passkeyButton = `${withRo(biometricName())} 로그인`;
 
 async function run(action: () => Promise<void>): Promise<void> {
   busy.value = true;
@@ -41,7 +43,7 @@ async function run(action: () => Promise<void>): Promise<void> {
         data-testid="login-passkey"
         @click="run(auth.loginWithPasskey)"
       >
-        패스키로 로그인 (Face ID)
+        {{ passkeyButton }}
       </button>
       <p v-if="supported" class="muted hint">
         다른 기기의 패스키는 QR 코드를 아이폰으로 찍어 로그인할 수 있습니다.

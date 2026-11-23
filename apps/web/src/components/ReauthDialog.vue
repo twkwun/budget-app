@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useAuthStore } from '../stores/auth.ts';
+import { biometricName, withRo } from '../auth/platform.ts';
 import VerifyIdentity from './VerifyIdentity.vue';
 
 const auth = useAuthStore();
@@ -10,7 +11,7 @@ const auth = useAuthStore();
     <div class="dialog card" role="dialog" aria-modal="true" aria-labelledby="reauth-title">
       <h2 id="reauth-title">본인 확인</h2>
       <p class="muted">중요한 설정을 바꾸기 전에 한 번 더 확인합니다.</p>
-      <VerifyIdentity passkey-label="Face ID로 확인" />
+      <VerifyIdentity :passkey-label="`${withRo(biometricName())} 확인`" />
       <button type="button" class="btn btn-block cancel" @click="auth.cancelReauth()">취소</button>
     </div>
   </div>

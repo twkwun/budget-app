@@ -19,7 +19,8 @@
     "backup": "pnpm --filter @budget/server backup",
     "db:generate": "pnpm --filter @budget/server db:generate",
     "e2e": "pnpm build && playwright test --config e2e/playwright.config.ts",
-    "e2e:only": "playwright test --config e2e/playwright.config.ts"
+    "e2e:only": "playwright test --config e2e/playwright.config.ts",
+    "seed:demo": "pnpm --filter @budget/server seed:demo"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
