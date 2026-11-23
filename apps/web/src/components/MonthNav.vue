@@ -5,7 +5,9 @@ import { monthLabel } from '../ledger/format.ts';
 import AppIcon from './AppIcon.vue';
 
 const month = defineModel<YearMonth>({ required: true });
-const isCurrent = computed(() => month.value >= currentYearMonth());
+/** Latest month reachable with 다음 달 (default: this month). */
+const props = defineProps<{ max?: YearMonth }>();
+const isCurrent = computed(() => month.value >= (props.max ?? currentYearMonth()));
 </script>
 
 <template>
@@ -46,8 +48,8 @@ const isCurrent = computed(() => month.value >= currentYearMonth());
 .nav-btn {
   display: grid;
   place-items: center;
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   border: 0;
   border-radius: 10px;
   background: transparent;

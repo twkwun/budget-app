@@ -1,11 +1,12 @@
 import { buildApp } from './app.ts';
-import { startBackupScheduler } from './backup/scheduler.ts';
+import { startBackupScheduler, type BackupScheduler } from './backup/scheduler.ts';
 import { ConfigError, loadConfig, type Config } from './config.ts';
 import { openDatabase } from './db/client.ts';
 import { runMigrations } from './db/migrate.ts';
 import { seedDefaultCategories } from './db/seed.ts';
 import { deleteExpiredPreviews } from './importer/service.ts';
 import { backfillMerchantKeys, seedKeywordRules } from './ledger/categorize.ts';
+import { refreshSuggestions } from './planning/recurring.ts';
 
 function loadConfigOrExit(): Config {
   try {
@@ -26,13 +27,14 @@ const seeded = seedDefaultCategories(db);
 seedKeywordRules(db);
 backfillMerchantKeys(db);
 
-const app = await buildApp({ config, db });
+let backups: BackupScheduler | null = null;
+const app = await buildApp({ config, db, backups: () => backups });
 app.log.info(
   { version: config.app.version, dbFile: config.dbFile, seededCategories: seeded },
   'database ready',
 );
 
-const backups = config.backup.enabled
+backups = config.backup.enabled
   ? startBackupScheduler({
       sqlite,
       dir: config.backupDir,
@@ -42,13 +44,19 @@ const backups = config.backup.enabled
     })
   : null;
 
-// Previews not applied within a day are deleted with their rows (hourly check).
+// Hourly: delete previews not applied within a day, and look for new 고정지출 candidates.
 const sweepImports = () => {
   try {
     const n = deleteExpiredPreviews(db, Date.now());
     if (n) app.log.info({ deleted: n }, 'expired import previews deleted');
   } catch (error) {
     app.log.error({ err: error }, 'import preview cleanup failed');
+  }
+  try {
+    const n = refreshSuggestions(db, Date.now());
+    if (n) app.log.info({ added: n }, 'new recurring expense suggestions');
+  } catch (error) {
+    app.log.error({ err: error }, 'recurring detection failed');
   }
 };
 sweepImports();

@@ -47,7 +47,11 @@ export type ApiErrorCode =
   | 'too_many_rows'
   | 'corrupt_file'
   | 'parse_timeout'
-  | 'no_rows';
+  | 'no_rows'
+  | 'budget_invalid'
+  | 'recurring_invalid'
+  | 'recurring_exists'
+  | 'backup_failed';
 
 export interface ApiErrorBody {
   error: {

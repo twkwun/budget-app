@@ -10,6 +10,7 @@ export const ICONS = {
   more: 'M5 12h.01M12 12h.01M19 12h.01',
   chevron: 'm9 6 6 6-6 6',
   refresh: 'M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7',
+  target: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM12 12h.01',
 } as const;
 
 export type IconName = keyof typeof ICONS;

@@ -1,6 +1,7 @@
 import { createPinia } from 'pinia';
 import { createApp } from 'vue';
 import App from './App.vue';
+import { isStaleChunkError, registerServiceWorker } from './pwa.ts';
 import { router } from './router.ts';
 import { useAuthStore } from './stores/auth.ts';
 import { useInboxStore } from './stores/inbox.ts';
@@ -22,4 +23,9 @@ useAuthStore().install({
 router.afterEach((to) => {
   if (!to.meta.public && useAuthStore().authenticated) void useInboxStore().refresh();
 });
+// A screen from an older build that is no longer on the server: reload into the new build.
+router.onError((error, to) => {
+  if (isStaleChunkError(error)) window.location.assign(to.fullPath);
+});
 app.use(router).mount('#app');
+registerServiceWorker();

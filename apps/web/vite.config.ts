@@ -3,11 +3,19 @@ import { defaultClientConditions, defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
 const THEME_COLOR = '#0f766e';
+/** Shown in 설정 so the family can tell which app build they are running. */
+const APP_BUILD = process.env.APP_BUILD ?? new Date().toISOString().slice(0, 16).replace('T', ' ');
 const apiProxy = {
   '/api': { target: process.env.API_PROXY_TARGET ?? 'http://127.0.0.1:3000' },
 };
 
 export default defineConfig({
+  define: { __APP_BUILD__: JSON.stringify(APP_BUILD) },
+  build: {
+    // ECharts is one lazily loaded chunk (~540 kB, ~185 kB gzip) used only by
+    // chart screens; the app shell stays small.
+    chunkSizeWarningLimit: 600,
+  },
   resolve: {
     // Use @budget/shared TypeScript sources directly; no prebuild needed.
     conditions: ['@budget/source', ...defaultClientConditions],
@@ -15,7 +23,10 @@ export default defineConfig({
   plugins: [
     vue(),
     VitePWA({
-      registerType: 'autoUpdate',
+      // Updates wait for the user (or the next start) instead of swapping code
+      // under an open screen; src/pwa.ts registers the worker and applies them.
+      registerType: 'prompt',
+      injectRegister: false,
       includeAssets: ['favicon.ico', 'favicon.svg', 'apple-touch-icon-180x180.png'],
       manifest: {
         id: '/',
@@ -48,6 +59,8 @@ export default defineConfig({
         // API calls must always hit the network and never get the app shell.
         navigateFallbackDenylist: [/^\/api(?:\/|$)/],
         cleanupOutdatedCaches: true,
+        // Take control on first install; later versions wait (see src/pwa.ts).
+        clientsClaim: true,
       },
     }),
   ],

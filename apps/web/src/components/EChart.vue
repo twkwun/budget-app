@@ -13,6 +13,10 @@ const props = defineProps<{
   height: number;
   label: string;
 }>();
+const emit = defineEmits<{
+  /** A data item was clicked or tapped (bars, points, slices). */
+  select: [item: { dataIndex: number; seriesIndex: number; name: string }];
+}>();
 const el = ref<HTMLDivElement | null>(null);
 const failed = ref(false);
 const chart = shallowRef<ECharts | null>(null);
@@ -31,6 +35,14 @@ onMounted(async () => {
     if (!el.value) return;
     chart.value = init(el.value, null, { renderer: 'svg', locale: 'EN' });
     render();
+    chart.value.on('click', (p) => {
+      const item = p as { dataIndex: number; seriesIndex?: number; name: string };
+      emit('select', {
+        dataIndex: item.dataIndex,
+        seriesIndex: item.seriesIndex ?? 0,
+        name: item.name,
+      });
+    });
     resize = new ResizeObserver(() => chart.value?.resize());
     resize.observe(el.value);
     scheme.addEventListener('change', render);
@@ -59,6 +71,8 @@ onBeforeUnmount(() => {
 .echart {
   position: relative;
   width: 100%;
+  /* Keep ECharts' tooltip (z-index 9999999) below the privacy cover and sheets. */
+  isolation: isolate;
 }
 .canvas {
   position: absolute;

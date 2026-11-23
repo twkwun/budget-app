@@ -16,6 +16,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { name: 'add', path: '/add', label: '추가', icon: 'plus' },
   { name: 'import', path: '/import', label: '가져오기', icon: 'upload' },
   { name: 'stats', path: '/stats', label: '통계', icon: 'chart' },
+  { name: 'budgets', path: '/budgets', label: '예산', icon: 'target' },
   { name: 'settings', path: '/settings', label: '설정', icon: 'gear' },
 ];
 

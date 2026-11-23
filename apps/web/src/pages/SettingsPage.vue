@@ -1,12 +1,9 @@
 <script setup lang="ts">
 import AppIcon from '../components/AppIcon.vue';
+import { APP_BUILD } from '../pwa.ts';
 import { useAuthStore } from '../stores/auth.ts';
 
 const auth = useAuthStore();
-const later = [
-  { label: '예산', stage: '6단계' },
-  { label: '백업', stage: '이후 단계' },
-];
 </script>
 
 <template>
@@ -55,17 +52,35 @@ const later = [
           <AppIcon name="chevron" :size="18" class="chevron" />
         </RouterLink>
       </li>
-      <li v-for="item in later" :key="item.label">
-        <div class="row disabled">
-          <span>{{ item.label }}</span>
-          <span class="muted small">{{ item.stage }}에서 제공</span>
-        </div>
+      <li>
+        <RouterLink to="/budgets" class="row" data-testid="settings-budgets-link">
+          <span>예산</span>
+          <span class="muted small">전체·분류별 한 달 예산, 바꾼 기록</span>
+          <AppIcon name="chevron" :size="18" class="chevron" />
+        </RouterLink>
+      </li>
+      <li>
+        <RouterLink to="/settings/recurring" class="row" data-testid="settings-recurring-link">
+          <span>고정지출</span>
+          <span class="muted small">매달 나가는 돈, 자동으로 찾은 후보</span>
+          <AppIcon name="chevron" :size="18" class="chevron" />
+        </RouterLink>
+      </li>
+      <li>
+        <RouterLink to="/settings/backup" class="row" data-testid="settings-backup-link">
+          <span>백업·내보내기</span>
+          <span class="muted small">{{
+            auth.isAdmin ? 'CSV 내보내기, 백업 상태와 지금 백업' : 'CSV 내보내기'
+          }}</span>
+          <AppIcon name="chevron" :size="18" class="chevron" />
+        </RouterLink>
       </li>
     </ul>
     <p class="account muted">
       {{ auth.user?.displayName }} ({{ auth.user?.loginName }}) ·
       {{ auth.isAdmin ? '관리자' : '구성원' }}
     </p>
+    <p class="muted build" data-testid="app-build">앱 빌드 {{ APP_BUILD }}</p>
     <button type="button" class="btn btn-block" data-testid="logout" @click="auth.logout()">
       로그아웃
     </button>
@@ -86,9 +101,6 @@ const later = [
   color: inherit;
   text-decoration: none;
 }
-.row.disabled {
-  opacity: 0.6;
-}
 li + li .row {
   border-top: 1px solid var(--border);
 }
@@ -98,6 +110,11 @@ li + li .row {
 .chevron {
   margin-left: auto;
   color: var(--text-muted);
+}
+.build {
+  margin: 0 0 12px;
+  font-size: 0.75rem;
+  text-align: center;
 }
 .account {
   margin: 24px 0 8px;

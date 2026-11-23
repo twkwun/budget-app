@@ -31,6 +31,7 @@ import type {
   CategoryKind,
   ImportBatchStatus,
   RawRecordIssue,
+  RecurringStatus,
   RawRecordSource,
   RawRecordStatus,
   RuleMatchType,
@@ -430,7 +431,14 @@ export const budgets = sqliteTable(
     month: text('month').notNull(),
     /** Null means the overall monthly budget. */
     categoryId: integer('category_id').references(() => categories.id, { onDelete: 'cascade' }),
+    /**
+     * In force from `month` until a later row for the same category. 0 means
+     * "no budget" from this month on (a removal that keeps earlier months).
+     */
     amount: integer('amount').notNull(),
+    updatedByUserId: integer('updated_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -444,5 +452,35 @@ export const budgets = sqliteTable(
       .on(t.month)
       .where(sql`category_id is null`),
     check('budgets_amount_check', sql`amount >= 0`),
+  ],
+);
+
+/** 고정지출: monthly payments the family expects (detected or added by hand). */
+export const recurringExpenses = sqliteTable(
+  'recurring_expenses',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    name: text('name').notNull(),
+    /** normalizeMerchant() text a payment's merchant must contain to match. */
+    matchKey: text('match_key').notNull(),
+    /** Expected amount (KRW); a payment within ±20% matches. */
+    amount: integer('amount').notNull(),
+    /** Expected day of month (1–31, clamped to the month length). */
+    dayOfMonth: integer('day_of_month').notNull(),
+    categoryId: integer('category_id').references(() => categories.id, { onDelete: 'set null' }),
+    accountId: integer('account_id').references(() => accounts.id, { onDelete: 'set null' }),
+    status: text('status').$type<RecurringStatus>().notNull().default('suggested'),
+    source: text('source').$type<'detected' | 'manual'>().notNull().default('detected'),
+    createdByUserId: integer('created_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex('recurring_expenses_match_key_unique').on(t.matchKey),
+    index('recurring_expenses_status_idx').on(t.status),
+    check('recurring_day_check', sql`day_of_month between 1 and 31`),
+    check('recurring_amount_check', sql`amount > 0`),
   ],
 );

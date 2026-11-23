@@ -139,6 +139,9 @@ select {
 
 input:focus-visible,
 select:focus-visible,
+summary:focus-visible,
+a:focus-visible,
+.link-button:focus-visible,
 .btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
@@ -181,11 +184,33 @@ select:focus-visible,
   font-size: 0.85rem;
 }
 
+/* Touch screens: every button keeps a 44pt tap target (Apple HIG). */
+@media (pointer: coarse) {
+  .btn-small {
+    min-height: 44px;
+    padding: 8px 12px;
+  }
+  button:not(.link-button),
+  [role='radio'],
+  [role='tab'] {
+    min-height: 44px !important;
+  }
+  .link-button:not(p .link-button) {
+    min-height: 44px;
+  }
+  summary {
+    padding-block: 12px;
+  }
+}
+
 .btn-block {
   width: 100%;
 }
 
 .link-button {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
   border: 0;
   background: none;
   padding: 0;

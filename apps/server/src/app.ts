@@ -20,6 +20,7 @@ import { inboxRoutes } from './routes/inbox.ts';
 import { meRoutes } from './routes/me.ts';
 import { memberRoutes } from './routes/members.ts';
 import { passkeyRoutes } from './routes/passkeys.ts';
+import { planningRoutes, type BackupRunner } from './routes/planning.ts';
 import { ruleRoutes } from './routes/rules.ts';
 import { setupRoutes } from './routes/setup.ts';
 import { transactionRoutes } from './routes/transactions.ts';
@@ -36,6 +37,8 @@ export interface BuildAppOptions {
   passwordParams?: ScryptParams;
   /** Filled with every /api route and its access level once the app is built. */
   routeAccess?: RouteAccess[];
+  /** The backup scheduler, once running (used by 지금 백업 and the status page). */
+  backups?: () => BackupRunner | null;
 }
 
 const SECURITY_HEADERS: Record<string, string> = {
@@ -148,6 +151,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       await api.register(inboxRoutes(ctx));
       await api.register(webhookRoutes(ctx));
       await api.register(importRoutes(ctx));
+      await api.register(planningRoutes(ctx, { backups: options.backups }));
     },
     { prefix: '/api' },
   );

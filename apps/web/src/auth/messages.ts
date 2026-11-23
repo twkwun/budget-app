@@ -15,6 +15,11 @@ const MESSAGES: Record<string, string> = {
   forbidden: '권한이 없습니다.',
   network_error: '서버에 연결할 수 없습니다. Tailscale 연결을 확인하세요.',
   not_found: '대상을 찾을 수 없습니다.',
+  budget_invalid: '예산은 지출의 상위 분류(사용 중인 것)에만 정할 수 있습니다.',
+  recurring_invalid: '분류나 결제 수단을 확인하세요.',
+  recurring_exists: '같은 가맹점으로 이미 등록된 고정지출이 있습니다.',
+  backup_failed: '백업에 실패했습니다. 서버 로그를 확인하세요.',
+  reauth_required: '본인 확인이 필요합니다.',
 };
 
 /** Korean message for an error from the API client or WebAuthn. */

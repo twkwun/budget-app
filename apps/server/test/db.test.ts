@@ -18,6 +18,7 @@ const EXPECTED_TABLES = [
   'invites',
   'passkeys',
   'raw_records',
+  'recurring_expenses',
   'sessions',
   'transactions',
   'users',

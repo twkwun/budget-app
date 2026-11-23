@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { toLocalDate } from '@budget/shared';
 import { TEST_SCRYPT_PARAMS, PasswordHasher } from '../src/auth/password.ts';
 import { prepareForDemo, seedDemo, SeedRefused } from '../src/cli/seed-demo.ts';
-import { transactions, users } from '../src/db/schema.ts';
+import { budgets, recurringExpenses, transactions, users } from '../src/db/schema.ts';
 import { migratedDatabase } from './helpers.ts';
 
 describe('seed:demo', () => {
-  it('creates two members, accounts and three months of invented transactions', async () => {
+  it('creates two members, accounts, two years of invented transactions, budgets and 고정지출', async () => {
     const { db } = migratedDatabase();
     const now = Date.parse('2026-11-22T03:00:00Z');
     expect(prepareForDemo(db, false)).toBe(false);
@@ -16,9 +16,12 @@ describe('seed:demo', () => {
     expect(rows.length).toBeGreaterThan(150);
     expect(rows.every((r) => r.occurredAt.getTime() <= now)).toBe(true);
     expect(rows.every((r) => r.occurredDate === toLocalDate(r.occurredAt))).toBe(true);
-    expect(new Set(rows.map((r) => r.occurredDate.slice(0, 7)))).toEqual(
-      new Set(['2026-09', '2026-10', '2026-11']),
-    );
+    const months = new Set(rows.map((r) => r.occurredDate.slice(0, 7)));
+    expect(months.size).toBe(24);
+    expect(months.has('2024-12')).toBe(true);
+    expect(months.has('2026-11')).toBe(true);
+    expect(db.select().from(budgets).all().length).toBeGreaterThan(0);
+    expect(db.select().from(recurringExpenses).all().length).toBeGreaterThan(0);
     for (const status of ['cancelled', 'needs_review'] as const) {
       expect(rows.some((r) => r.status === status)).toBe(true);
     }

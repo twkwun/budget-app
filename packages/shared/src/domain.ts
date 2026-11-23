@@ -50,3 +50,6 @@ export const IMPORT_BATCH_STATUSES = [
   'failed',
 ] as const;
 export type ImportBatchStatus = (typeof IMPORT_BATCH_STATUSES)[number];
+
+export const RECURRING_STATUSES = ['suggested', 'confirmed', 'dismissed'] as const;
+export type RecurringStatus = (typeof RECURRING_STATUSES)[number];

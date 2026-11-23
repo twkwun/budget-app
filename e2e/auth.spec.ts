@@ -381,3 +381,79 @@ test('file import: password, payment-method mapping, 확인됨 with SMS, re-impo
   await expect(page.getByTestId('count-new')).toHaveCount(0);
   await expect(page.getByTestId('import-apply')).toBeDisabled();
 });
+
+test('budget on 홈, 통계 month into 내역, CSV export', async ({ page }) => {
+  page.on('dialog', (d) => void d.accept());
+  await page.goto('/login');
+  await page.getByTestId('login-name').fill(ADMIN.login);
+  await page.getByTestId('login-password').fill(ADMIN.password);
+  await page.getByRole('button', { name: '비밀번호로 로그인' }).click();
+  await expect(page).toHaveURL(/\/$/);
+
+  // Today in Seoul, whatever the machine clock says.
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date());
+  const month = today.slice(0, 7);
+  const tree = (await (await page.request.get('/api/categories')).json()) as {
+    expense: { id: number; name: string }[];
+  };
+  const food = tree.expense.find((c) => c.name === '식비')?.id;
+  const created = await page.request.post('/api/transactions', {
+    headers: { origin: new URL(page.url()).origin },
+    data: {
+      type: 'expense',
+      amount: 50_000,
+      merchant: '=예산테스트',
+      categoryId: food,
+      occurredAt: new Date().toISOString(),
+    },
+  });
+  expect(created.status()).toBe(201);
+
+  // 예산: overall 200,000 and 식비 40,000 (over).
+  await page.goto('/budgets');
+  await page.getByTestId('edit-overall').click();
+  await page.getByTestId('budget-amount').fill('200000');
+  await page.getByTestId('save-budget').click();
+  await expect(page.getByTestId('budget-sheet')).toBeHidden();
+  await page.getByTestId('budget-category').selectOption({ label: '식비' });
+  await page.getByTestId('add-category-budget').click();
+  await page.getByTestId('budget-amount').fill('40000');
+  await page.getByTestId('save-budget').click();
+  await expect(page.getByTestId('budget-history')).toContainText('식비');
+
+  // 홈 shows both; the over-budget one says so in words.
+  await page.goto('/');
+  const budgets = page.getByTestId('home-budgets');
+  await expect(budgets.getByTestId('budget-meter')).toHaveCount(2);
+  await expect(budgets.getByTestId('budget-meter').first()).toContainText('200,000원');
+  const over = budgets.locator('[data-state="over"]');
+  await expect(over).toContainText('식비');
+  await expect(over).toContainText('10,000원 초과');
+
+  // 통계 → this month in the table → 내역 filtered to that month's spending.
+  await page.goto('/stats');
+  await expect(page.getByTestId('stats-expense')).not.toHaveText('0원');
+  await page.getByTestId('monthly-table').locator('summary').click();
+  const [y, m] = month.split('-').map(Number);
+  await page
+    .getByTestId('monthly-table')
+    .getByRole('link', { name: `${y}년 ${m}월` })
+    .click();
+  await expect(page).toHaveURL(new RegExp(`/transactions\\?month=${month}&type=expense`));
+  await expect(page.getByTestId('tx-row').filter({ hasText: '=예산테스트' })).toHaveCount(1);
+
+  // CSV export of today: UTF-8 with BOM, formula-like text neutralised.
+  await page.goto('/settings/backup');
+  await page.getByTestId('export-from').fill(today);
+  await page.getByTestId('export-to').fill(today);
+  const download = page.waitForEvent('download');
+  await page.getByTestId('export-csv').click();
+  const file = await (await download).path();
+  const { readFileSync } = await import('node:fs');
+  const bytes = readFileSync(file);
+  expect([...bytes.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+  const text = bytes.subarray(3).toString('utf8');
+  expect(text.split('\r\n')[0]).toContain('날짜,시간,구분,금액,가맹점');
+  expect(text).toContain(`${today},`);
+  expect(text).toContain("'=예산테스트");
+});

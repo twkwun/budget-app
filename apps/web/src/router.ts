@@ -50,6 +50,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '통계' },
   },
   {
+    path: '/budgets',
+    name: 'budgets',
+    component: () => import('./pages/BudgetsPage.vue'),
+    meta: { title: '예산' },
+  },
+  {
     path: '/settings',
     name: 'settings',
     component: () => import('./pages/SettingsPage.vue'),
@@ -84,6 +90,18 @@ const routes: RouteRecordRaw[] = [
     name: 'settings-rules',
     component: () => import('./pages/settings/RulesPage.vue'),
     meta: { title: '분류 규칙' },
+  },
+  {
+    path: '/settings/recurring',
+    name: 'settings-recurring',
+    component: () => import('./pages/settings/RecurringPage.vue'),
+    meta: { title: '고정지출' },
+  },
+  {
+    path: '/settings/backup',
+    name: 'settings-backup',
+    component: () => import('./pages/settings/BackupPage.vue'),
+    meta: { title: '백업·내보내기' },
   },
   {
     path: '/settings/members',

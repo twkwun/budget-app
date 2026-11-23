@@ -6,16 +6,17 @@ import {
   formatKrw,
   isYearMonth,
   type CategoryShare,
-  type MonthSummary,
+  type HomeSummary,
   type YearMonth,
 } from '@budget/shared';
 import { api } from '../api/client.ts';
 import { errorMessage } from '../auth/messages.ts';
 import type { ChartTheme } from '../charts/theme.ts';
+import BudgetMeter from '../components/BudgetMeter.vue';
 import EChart from '../components/EChart.vue';
 import MonthNav from '../components/MonthNav.vue';
 import ScopeSwitch from '../components/ScopeSwitch.vue';
-import { changeRatio, compactKrw, monthLabel } from '../ledger/format.ts';
+import { changeRatio, compactKrw, dayLabel, monthLabel } from '../ledger/format.ts';
 import { useHealthStore } from '../stores/health.ts';
 import { useLedgerStore } from '../stores/ledger.ts';
 
@@ -40,7 +41,7 @@ const scope = computed<'all' | number>({
     void router.replace({ query: { ...route.query, owner: o === 'all' ? undefined : String(o) } }),
 });
 
-const summary = ref<MonthSummary | null>(null);
+const summary = ref<HomeSummary | null>(null);
 const loading = ref(true);
 const error = ref('');
 
@@ -48,7 +49,7 @@ async function load(): Promise<void> {
   loading.value = true;
   error.value = '';
   try {
-    summary.value = await api.get<MonthSummary>(
+    summary.value = await api.get<HomeSummary>(
       `/summary?month=${month.value}&owner=${scope.value}`,
     );
   } catch (e) {
@@ -178,6 +179,23 @@ function change(current: number, previous: number): string {
   return `지난달보다 ${formatKrw(Math.abs(diff))} ${arrow} ${Math.abs(Math.round(ratio * 100))}%`;
 }
 
+/** 홈 shows the overall budget and up to three category budgets, the fullest first. */
+const budgetRows = computed(() => {
+  const b = summary.value?.budgets;
+  if (!b) return null;
+  const cats = [...b.categories].sort((x, y) => y.percent - x.percent);
+  return { overall: b.overall, top: cats.slice(0, 3), more: Math.max(0, cats.length - 3) };
+});
+const hasBudgets = computed(
+  () => !!budgetRows.value && (!!budgetRows.value.overall || budgetRows.value.top.length > 0),
+);
+const recurring = computed(() => summary.value?.recurring ?? null);
+const RECURRING_STATE = {
+  paid: '결제됨',
+  upcoming: '예정',
+  late: '아직 없음',
+} as const;
+
 const spendingDays = computed(() => (summary.value?.daily ?? []).filter((d) => d.expense > 0));
 const newHousehold = computed(() => ledger.loaded && ledger.accounts.length === 0);
 const listLink = (extra: Record<string, string>) => ({
@@ -250,6 +268,88 @@ const listLink = (extra: Record<string, string>) => ({
       >
         <span>확인 필요</span><strong class="tabular">{{ summary.needsReviewCount }}건</strong>
       </RouterLink>
+    </div>
+
+    <div class="plan">
+      <section
+        v-if="summary && budgetRows && !newHousehold"
+        class="card budgets"
+        aria-labelledby="home-budget"
+        data-testid="home-budgets"
+      >
+        <div class="card-head">
+          <h2 id="home-budget">예산</h2>
+          <RouterLink :to="{ path: '/budgets', query: { month } }" class="link-button">
+            {{ hasBudgets ? '예산 관리' : '예산 설정' }}
+          </RouterLink>
+        </div>
+        <template v-if="hasBudgets">
+          <BudgetMeter v-if="budgetRows.overall" :budget="budgetRows.overall" primary />
+          <BudgetMeter v-for="b in budgetRows.top" :key="b.categoryId ?? 0" :budget="b" />
+          <RouterLink
+            v-if="budgetRows.more"
+            :to="{ path: '/budgets', query: { month } }"
+            class="muted small"
+          >
+            분류 예산 {{ budgetRows.more }}개 더 보기
+          </RouterLink>
+        </template>
+        <p v-else class="muted small">
+          한 달 예산을 정해 두면 얼마나 썼는지, 이 속도면 괜찮은지 여기서 볼 수 있습니다.
+        </p>
+      </section>
+      <p v-else-if="summary && !summary.budgets && scope !== 'all'" class="muted small scope-note">
+        예산과 고정지출은 ‘가족 전체’에서 볼 수 있습니다.
+      </p>
+
+      <section
+        v-if="recurring && (recurring.items.length || recurring.suggestionCount)"
+        class="card recurring"
+        aria-labelledby="home-recurring"
+        data-testid="home-recurring"
+      >
+        <div class="card-head">
+          <h2 id="home-recurring">고정지출</h2>
+          <RouterLink to="/settings/recurring" class="link-button">관리</RouterLink>
+        </div>
+        <p v-if="recurring.items.length" class="muted small">
+          <template v-if="recurring.remainingAmount">
+            아직 나가지 않은 금액
+            <strong class="tabular">{{ formatKrw(recurring.remainingAmount) }}</strong>
+          </template>
+          <template v-else>이번 달 고정지출이 모두 결제됐습니다.</template>
+        </p>
+        <ul v-if="recurring.items.length" class="recurring-list">
+          <li
+            v-for="item in recurring.items"
+            :key="item.id"
+            :data-state="item.state"
+            data-testid="home-recurring-item"
+          >
+            <span class="r-name">{{ item.name }}</span>
+            <span class="muted r-date">{{
+              item.paid ? dayLabel(item.paid.date) : dayLabel(item.expectedDate)
+            }}</span>
+            <span class="tabular r-amount">{{
+              formatKrw(item.paid ? item.paid.amount : item.amount)
+            }}</span>
+            <span class="badge r-state" :class="`state-${item.state}`">
+              <span aria-hidden="true">{{
+                item.state === 'paid' ? '✓' : item.state === 'late' ? '!' : '·'
+              }}</span>
+              {{ RECURRING_STATE[item.state] }}
+            </span>
+          </li>
+        </ul>
+        <RouterLink
+          v-if="recurring.suggestionCount"
+          to="/settings/recurring"
+          class="suggest"
+          data-testid="recurring-suggestions-link"
+        >
+          매달 나가는 것 같은 지출 {{ recurring.suggestionCount }}건 확인하기
+        </RouterLink>
+      </section>
     </div>
 
     <p v-if="loading && !summary" class="muted">불러오는 중…</p>
@@ -385,6 +485,91 @@ const listLink = (extra: Record<string, string>) => ({
   display: grid;
   gap: 12px;
 }
+.plan {
+  display: grid;
+  gap: 12px;
+}
+.plan:empty {
+  display: none;
+}
+.budgets,
+.recurring {
+  display: grid;
+  gap: 12px;
+}
+.card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.card-head h2 {
+  margin: 0;
+}
+.card-head .link-button {
+  min-height: 44px;
+  padding: 0 4px;
+}
+.small {
+  font-size: 0.85rem;
+  margin: 0;
+}
+.scope-note {
+  padding: 0 4px;
+}
+.recurring-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+.recurring-list li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    'name amount'
+    'date state';
+  gap: 2px 8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+.r-name {
+  grid-area: name;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.r-date {
+  grid-area: date;
+  font-size: 0.8rem;
+}
+.r-amount {
+  grid-area: amount;
+  text-align: right;
+}
+.r-state {
+  grid-area: state;
+  justify-self: end;
+}
+[data-state='paid'] .r-name,
+[data-state='paid'] .r-amount {
+  color: var(--text-muted);
+}
+.state-paid {
+  color: var(--ok);
+}
+.state-late {
+  color: var(--warn);
+}
+.suggest {
+  font-size: 0.85rem;
+  color: var(--accent);
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
 .donut-wrap {
   display: grid;
   gap: 12px;
@@ -490,6 +675,10 @@ const listLink = (extra: Record<string, string>) => ({
   }
 }
 @media (min-width: 1024px) {
+  .plan {
+    grid-template-columns: 1fr 1fr;
+    align-items: start;
+  }
   .charts {
     grid-template-columns: 1fr 1fr;
   }

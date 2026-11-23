@@ -12,7 +12,7 @@ import {
   isYearMonth,
   toLocalDate,
   type EntryDefaults,
-  type MonthSummary,
+  type HomeSummary,
   type TransactionPage,
   type TransactionType,
 } from '@budget/shared';
@@ -24,13 +24,8 @@ import { accounts, categories, transactions, users } from '../db/schema.ts';
 import { errors } from '../http/errors.ts';
 import { categorize } from '../ledger/categorize.ts';
 import { parse } from '../http/validation.ts';
-import {
-  entryDefaults,
-  getTransaction,
-  listTransactions,
-  monthSummary,
-  visibleTo,
-} from '../ledger/queries.ts';
+import { homeSummary } from '../planning/summary.ts';
+import { entryDefaults, getTransaction, listTransactions, visibleTo } from '../ledger/queries.ts';
 
 type TxRow = typeof transactions.$inferSelect;
 
@@ -280,7 +275,7 @@ export function transactionRoutes(ctx: AppContext): FastifyPluginAsync {
       return reply.code(204).send();
     });
 
-    app.get('/summary', async (request): Promise<MonthSummary> => {
+    app.get('/summary', async (request): Promise<HomeSummary> => {
       const { user } = currentAuth(request);
       const q = parse(
         z.object({
@@ -289,7 +284,7 @@ export function transactionRoutes(ctx: AppContext): FastifyPluginAsync {
         }),
         request.query,
       );
-      return monthSummary(ctx.db, user.id, q.month, q.owner === 'all' ? null : q.owner);
+      return homeSummary(ctx.db, user.id, q.month, q.owner === 'all' ? null : q.owner, ctx.now());
     });
 
     app.get('/entry-defaults', async (request): Promise<EntryDefaults> =>

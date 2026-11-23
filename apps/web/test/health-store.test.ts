@@ -61,7 +61,7 @@ describe('health store', () => {
 });
 
 describe('navigation', () => {
-  it('lists every DESIGN.md screen once', () => {
+  it('lists every DESIGN.md screen once, plus 예산', () => {
     expect(NAV_ITEMS.map((i) => i.label)).toEqual([
       '홈',
       '내역',
@@ -69,14 +69,17 @@ describe('navigation', () => {
       '추가',
       '가져오기',
       '통계',
+      '예산',
       '설정',
     ]);
-    expect(MORE_ITEMS.map((i) => i.label)).toEqual(['가져오기', '통계', '설정']);
+    expect(MORE_ITEMS.map((i) => i.label)).toEqual(['가져오기', '통계', '예산', '설정']);
   });
 
   it('highlights 더보기 for screens that are not tabs', () => {
     expect(activeTabFor('home')).toBe('home');
     expect(activeTabFor('stats')).toBe('more');
+    expect(activeTabFor('budgets')).toBe('more');
+    expect(activeTabFor('settings-recurring')).toBe('more');
     expect(activeTabFor('more')).toBe('more');
     expect(activeTabFor('not-found')).toBe('');
   });

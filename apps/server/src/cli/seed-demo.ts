@@ -1,6 +1,6 @@
 /**
  * Fill a development database with clearly invented demo data:
- * two members, a few accounts and three months of transactions.
+ * two members, a few accounts, two years of transactions, budgets and 고정지출.
  *
  *   pnpm seed:demo            refuses if the database already has users
  *   pnpm seed:demo --force    DELETES all users, accounts and transactions first
@@ -174,6 +174,7 @@ function wipe(db: AppDatabase): void {
       s.rawRecords,
       s.transactions,
       s.budgets,
+      s.recurringExpenses,
       s.categoryRules,
       s.importBatches,
       s.invites,
@@ -286,8 +287,13 @@ export async function seedDemo(db: AppDatabase, now = Date.now(), hasher = new P
 
   const thisMonth = currentYearMonth(now);
   const today = toLocalDate(now);
-  for (let offset = -2; offset <= 0; offset += 1) {
+  // Two years so 통계 can compare a year with the one before.
+  for (let offset = -23; offset <= 0; offset += 1) {
     const month = addMonths(thisMonth, offset);
+    // Seasonal swing so the charts are not flat: more in Dec/Jan and summer.
+    const monthNo = Number(month.slice(5));
+    const season =
+      [1.25, 1.1, 0.95, 0.9, 1.0, 0.95, 1.1, 1.15, 1.0, 0.95, 0.9, 1.2][monthNo - 1] ?? 1;
     // Fixed monthly items.
     add(`${month}-25`, 9, {
       type: 'income',
@@ -368,7 +374,7 @@ export async function seedDemo(db: AppDatabase, now = Date.now(), hasher = new P
                 : pick([junhoCard.id, junhoCard.id, cash.id]);
             add(date, 8 + Math.floor(random() * 14), {
               type: 'expense',
-              amount: round100(p.min + random() * (p.max - p.min)),
+              amount: round100((p.min + random() * (p.max - p.min)) * season),
               merchant: pick(p.merchants),
               categoryId: cat(p.category),
               accountId,
@@ -418,6 +424,85 @@ export async function seedDemo(db: AppDatabase, now = Date.now(), hasher = new P
     status: 'confirmed',
     isPrivate: true,
   });
+
+  // Budgets: the overall budget was set three months ago and lowered this
+  // month; 식비 and 쇼핑 have their own.
+  db.insert(s.budgets)
+    .values([
+      {
+        month: addMonths(thisMonth, -3),
+        categoryId: null,
+        amount: 3_000_000,
+        updatedByUserId: sujin.id,
+      },
+      { month: thisMonth, categoryId: null, amount: 2_800_000, updatedByUserId: sujin.id },
+      {
+        month: addMonths(thisMonth, -3),
+        categoryId: cat('expense.food'),
+        amount: 1_100_000,
+        updatedByUserId: sujin.id,
+      },
+      {
+        month: addMonths(thisMonth, -1),
+        categoryId: cat('expense.shopping'),
+        amount: 150_000,
+        updatedByUserId: junho.id,
+      },
+      {
+        month: addMonths(thisMonth, -1),
+        categoryId: cat('expense.living'),
+        amount: 250_000,
+        updatedByUserId: junho.id,
+      },
+    ])
+    .run();
+  // 고정지출: two confirmed from the monthly items above, two added by hand.
+  db.insert(s.recurringExpenses)
+    .values([
+      {
+        name: '아파트 관리비',
+        matchKey: normalizeMerchant('아파트 관리비'),
+        amount: 268_400,
+        dayOfMonth: 5,
+        categoryId: cat('expense.housing.maintenance'),
+        accountId: bank.id,
+        status: 'confirmed',
+        source: 'detected',
+      },
+      {
+        name: '통신요금',
+        matchKey: normalizeMerchant('통신요금'),
+        amount: 89_000,
+        dayOfMonth: 10,
+        categoryId: cat('expense.housing.telecom'),
+        accountId: sujinCard.id,
+        status: 'confirmed',
+        source: 'detected',
+      },
+      {
+        name: '정수기 렌탈',
+        matchKey: normalizeMerchant('정수기 렌탈'),
+        amount: 29_900,
+        dayOfMonth: 15,
+        categoryId: cat('expense.living.household'),
+        accountId: sujinCard.id,
+        status: 'confirmed',
+        source: 'manual',
+        createdByUserId: sujin.id,
+      },
+      {
+        name: '실손 보험료',
+        matchKey: normalizeMerchant('보험료'),
+        amount: 132_000,
+        dayOfMonth: 27,
+        categoryId: null,
+        accountId: bank.id,
+        status: 'confirmed',
+        source: 'manual',
+        createdByUserId: sujin.id,
+      },
+    ])
+    .run();
 
   db.transaction((tx) => {
     for (let i = 0; i < rows.length; i += 200)

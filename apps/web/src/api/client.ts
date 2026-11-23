@@ -39,6 +39,13 @@ export interface RequestOptions {
   /** Send this body as-is (a file upload) instead of JSON. */
   rawBody?: Blob;
   headers?: Record<string, string>;
+  /** Resolve with the body as a file ({ blob, filename }) instead of JSON. */
+  download?: boolean;
+}
+
+export interface Download {
+  blob: Blob;
+  filename: string;
 }
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -79,6 +86,11 @@ async function send<T>(
   }
   if (res.status === 204) return undefined as T;
   const type = res.headers.get('content-type') ?? '';
+  if (options.download && res.ok && !type.includes('application/json')) {
+    const disposition = res.headers.get('content-disposition') ?? '';
+    const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? 'download';
+    return { blob: await res.blob(), filename } satisfies Download as T;
+  }
   if (!type.includes('application/json')) {
     throw new ApiError(res.status, 'bad_response', `Unexpected response (${res.status})`);
   }
