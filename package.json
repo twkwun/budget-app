@@ -20,7 +20,8 @@
     "db:generate": "pnpm --filter @budget/server db:generate",
     "e2e": "pnpm build && playwright test --config e2e/playwright.config.ts",
     "e2e:only": "playwright test --config e2e/playwright.config.ts",
-    "seed:demo": "pnpm --filter @budget/server seed:demo"
+    "seed:demo": "pnpm --filter @budget/server seed:demo",
+    "reprocess": "pnpm --filter @budget/server reprocess"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

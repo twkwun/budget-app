@@ -15,9 +15,16 @@ defineEmits<{ open: [] }>();
     @click="$emit('open')"
   >
     <span class="main">
-      <span class="title">{{
-        tx.merchant || tx.categoryName || (tx.type === 'transfer' ? '이체' : '미분류')
-      }}</span>
+      <span class="title">
+        {{ tx.merchant || tx.categoryName || (tx.type === 'transfer' ? '이체' : '미분류') }}
+        <span
+          v-if="tx.hasSms"
+          class="source"
+          data-testid="source-sms"
+          title="카드 문자로 등록·확인됨"
+          >문자</span
+        >
+      </span>
       <span class="sub">
         <span v-if="tx.type !== 'transfer'" :class="{ uncategorized: !tx.categoryName }">{{
           tx.categoryName ?? '미분류'
@@ -72,6 +79,17 @@ defineEmits<{ open: [] }>();
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.source {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+  vertical-align: 2px;
 }
 .uncategorized {
   color: var(--warn);

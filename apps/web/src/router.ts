@@ -74,6 +74,18 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '분류' },
   },
   {
+    path: '/settings/sms',
+    name: 'settings-sms',
+    component: () => import('./pages/settings/SmsPage.vue'),
+    meta: { title: '문자 전달' },
+  },
+  {
+    path: '/settings/rules',
+    name: 'settings-rules',
+    component: () => import('./pages/settings/RulesPage.vue'),
+    meta: { title: '분류 규칙' },
+  },
+  {
     path: '/settings/members',
     name: 'settings-members',
     component: () => import('./pages/settings/MembersPage.vue'),

@@ -32,7 +32,7 @@ import {
   type YearMonth,
 } from '@budget/shared';
 import type { AppDatabase } from '../db/client.ts';
-import { accounts, categories, transactions, users } from '../db/schema.ts';
+import { accounts, categories, rawRecords, transactions, users } from '../db/schema.ts';
 import { errors } from '../http/errors.ts';
 
 export function visibleTo(userId: number): SQL {
@@ -128,6 +128,7 @@ function selectInfo(db: AppDatabase) {
       parentId: parent.id,
       accountName: accounts.name,
       ownerName: owner.displayName,
+      hasSms: sql<number>`exists (select 1 from ${rawRecords} where ${rawRecords.transactionId} = ${transactions.id} and ${rawRecords.source} = 'sms')`,
     })
     .from(transactions)
     .leftJoin(category, eq(transactions.categoryId, category.id))
@@ -164,6 +165,7 @@ function toInfo(r: InfoRow): TransactionInfo {
     source: t.source,
     installmentMonths: t.installmentMonths,
     isPrivate: t.isPrivate,
+    hasSms: Boolean(r.hasSms),
     createdAt: t.createdAt.toISOString(),
     updatedAt: t.updatedAt.toISOString(),
   };

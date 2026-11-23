@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { useRoute } from 'vue-router';
 import { NAV_ITEMS } from '../nav.ts';
+import { useInboxStore } from '../stores/inbox.ts';
 import AppIcon from './AppIcon.vue';
 
 const route = useRoute();
+const inbox = useInboxStore();
 const isActive = (name: string) =>
   route.name === name || String(route.name ?? '').startsWith(`${name}-`);
 </script>
@@ -24,6 +26,7 @@ const isActive = (name: string) =>
         >
           <AppIcon :name="item.icon" :size="20" />
           <span>{{ item.label }}</span>
+          <span v-if="item.name === 'inbox' && inbox.count" class="count">{{ inbox.count }}</span>
         </RouterLink>
       </li>
     </ul>
@@ -73,6 +76,17 @@ ul {
 .link:hover {
   background: var(--surface-hover);
   color: var(--text);
+}
+.count {
+  margin-left: auto;
+  min-width: 22px;
+  padding: 1px 7px;
+  border-radius: 11px;
+  background: var(--error);
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-align: center;
 }
 .link.active {
   background: var(--accent-soft);

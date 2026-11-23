@@ -4,6 +4,7 @@ import { ConfigError, loadConfig, type Config } from './config.ts';
 import { openDatabase } from './db/client.ts';
 import { runMigrations } from './db/migrate.ts';
 import { seedDefaultCategories } from './db/seed.ts';
+import { backfillMerchantKeys, seedKeywordRules } from './ledger/categorize.ts';
 
 function loadConfigOrExit(): Config {
   try {
@@ -21,6 +22,8 @@ const config = loadConfigOrExit();
 const { db, sqlite } = openDatabase(config.dbFile);
 runMigrations(db);
 const seeded = seedDefaultCategories(db);
+seedKeywordRules(db);
+backfillMerchantKeys(db);
 
 const app = await buildApp({ config, db });
 app.log.info(

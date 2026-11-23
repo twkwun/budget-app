@@ -3,6 +3,7 @@ import { TEST_SCRYPT_PARAMS } from '../../src/auth/password.ts';
 import { buildApp } from '../../src/app.ts';
 import type { RouteAccess } from '../../src/auth/guard.ts';
 import { seedDefaultCategories } from '../../src/db/seed.ts';
+import { seedKeywordRules } from '../../src/ledger/categorize.ts';
 import { migratedDatabase, testConfig } from '../helpers.ts';
 
 export const ORIGIN = 'http://localhost:5173';
@@ -73,6 +74,7 @@ export async function startTestApp(env: Record<string, string> = {}) {
   const config = testConfig({ PUBLIC_ORIGIN: ORIGIN, ...env });
   const { db, sqlite } = migratedDatabase(config.dataDir);
   seedDefaultCategories(db);
+  seedKeywordRules(db);
   const routeAccess: RouteAccess[] = [];
   const app = await buildApp({
     routeAccess,

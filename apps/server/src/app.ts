@@ -15,11 +15,14 @@ import { accountRoutes } from './routes/accounts.ts';
 import { authRoutes } from './routes/auth.ts';
 import { categoryRoutes } from './routes/categories.ts';
 import { healthRoutes } from './routes/health.ts';
+import { inboxRoutes } from './routes/inbox.ts';
 import { meRoutes } from './routes/me.ts';
 import { memberRoutes } from './routes/members.ts';
 import { passkeyRoutes } from './routes/passkeys.ts';
+import { ruleRoutes } from './routes/rules.ts';
 import { setupRoutes } from './routes/setup.ts';
 import { transactionRoutes } from './routes/transactions.ts';
+import { webhookRoutes } from './routes/webhook.ts';
 import { hasWebBuild, registerWebApp } from './static.ts';
 
 export interface BuildAppOptions {
@@ -140,6 +143,9 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       await api.register(accountRoutes(ctx));
       await api.register(categoryRoutes(ctx));
       await api.register(transactionRoutes(ctx));
+      await api.register(ruleRoutes(ctx));
+      await api.register(inboxRoutes(ctx));
+      await api.register(webhookRoutes(ctx));
     },
     { prefix: '/api' },
   );

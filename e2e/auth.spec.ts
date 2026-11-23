@@ -219,3 +219,74 @@ test('fast entry, list, home total, edit and delete', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByTestId('kpi-expense').locator('.value')).toHaveText('0원');
 });
+
+test('SMS webhook: token, two messages, 인박스 rule, automatic categorisation', async ({
+  page,
+}) => {
+  await page.goto('/login');
+  await page.getByTestId('login-name').fill(ADMIN.login);
+  await page.getByTestId('login-password').fill(ADMIN.password);
+  await page.getByRole('button', { name: '비밀번호로 로그인' }).click();
+  await expect(page).toHaveURL(/\/$/);
+
+  // Create a token in 설정 → 문자 전달 (fresh sign-in satisfies re-auth).
+  await page.goto('/settings/sms');
+  await page.getByTestId('token-device').fill('E2E 아이폰');
+  await page.getByTestId('create-token').click();
+  const token = (await page.getByTestId('token-value').textContent())?.trim() ?? '';
+  expect(token).toMatch(/^bgt_/);
+  const url = (await page.getByTestId('webhook-url').textContent())?.trim() ?? '';
+  expect(url).toMatch(/\/api\/webhook\/sms$/);
+
+  // Messages dated "now" in Asia/Seoul so they land in the current month.
+  const now = new Date();
+  const kst = new Date(now.getTime() + 9 * 3600_000);
+  // Date and time from the same instant, so a run at 00:01 KST cannot mix days.
+  const stamp = (minutesAgo: number) => {
+    const t = new Date(kst.getTime() - minutesAgo * 60_000);
+    const p = (n: number) => String(n).padStart(2, '0');
+    return `${p(t.getUTCMonth() + 1)}/${p(t.getUTCDate())} ${p(t.getUTCHours())}:${p(t.getUTCMinutes())}`;
+  };
+  const send = async (amount: string, when: string, merchant: string, secondsAgo: number) => {
+    const res = await page.request.post(url, {
+      headers: { authorization: `Bearer ${token}` },
+      data: {
+        text: `[Web발신]\n신한카드(4321)승인 테*트 ${amount}원(일시불)${when} ${merchant} 누적100,000원`,
+        receivedAt: new Date(now.getTime() - secondsAgo * 1000).toISOString(),
+      },
+    });
+    expect(res.ok()).toBe(true);
+    return (await res.json()) as { result: string; transactionId: number };
+  };
+  const cafe = await send('5,500', stamp(3), '구름카페 강남점', 170);
+  const craft = await send('32,000', stamp(2), '솔방울공방', 110);
+  expect(cafe.result).toBe('created');
+  expect(craft.result).toBe('created');
+
+  // Both appear in 내역 with the 문자 badge; the café was categorised by keyword.
+  await page.goto('/transactions');
+  const cafeRow = page.getByTestId('tx-row').filter({ hasText: '구름카페 강남점' });
+  await expect(cafeRow).toContainText('식비 > 카페·간식');
+  await expect(cafeRow.getByTestId('source-sms')).toBeVisible();
+  await expect(page.getByTestId('tx-row').filter({ hasText: '솔방울공방' })).toContainText(
+    '미분류',
+  );
+
+  // 인박스: categorise the 미분류 one and remember it.
+  await expect(page.getByTestId('inbox-badge')).toBeVisible();
+  await page.goto('/inbox');
+  const item = page.getByTestId('inbox-item').filter({ hasText: '솔방울공방' });
+  await item.getByTestId(`inbox-category-${craft.transactionId}`).selectOption({ label: '취미' });
+  await expect(item.getByTestId('inbox-remember')).toBeChecked();
+  await item.getByRole('button', { name: '적용' }).click();
+  await expect(page.getByTestId('inbox-item').filter({ hasText: '솔방울공방' })).toHaveCount(0);
+
+  // A third message from the same merchant is categorised automatically.
+  const third = await send('18,000', stamp(1), '솔방울공방', 50);
+  const tx = await (await page.request.get(`/api/transactions/${third.transactionId}`)).json();
+  expect(tx.categoryName).toBe('문화·여가 > 취미');
+  await page.goto('/transactions');
+  await expect(page.getByTestId('tx-row').filter({ hasText: '18,000원' })).toContainText(
+    '문화·여가 > 취미',
+  );
+});

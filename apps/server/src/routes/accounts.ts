@@ -9,6 +9,7 @@ import type { AppContext } from '../context.ts';
 import { accounts, users } from '../db/schema.ts';
 import { errors } from '../http/errors.ts';
 import { parse } from '../http/validation.ts';
+import { linkUnmatchedCards } from '../sms/ingest.ts';
 
 type AccountRow = typeof accounts.$inferSelect;
 
@@ -107,6 +108,7 @@ export function accountRoutes(ctx: AppContext): FastifyPluginAsync {
         })
         .returning()
         .get();
+      linkUnmatchedCards(ctx.db, created, ctx.now());
       return reply.code(201).send(getOne(user, created.id));
     });
 
@@ -164,6 +166,8 @@ export function accountRoutes(ctx: AppContext): FastifyPluginAsync {
         })
         .where(eq(accounts.id, id))
         .run();
+      const updated = ctx.db.select().from(accounts).where(eq(accounts.id, id)).get();
+      if (updated) linkUnmatchedCards(ctx.db, updated, ctx.now());
       return getOne(user, id);
     });
 

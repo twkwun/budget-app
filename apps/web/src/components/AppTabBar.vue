@@ -2,9 +2,11 @@
 import { computed } from 'vue';
 import { useRoute } from 'vue-router';
 import { TAB_ITEMS, activeTabFor } from '../nav.ts';
+import { useInboxStore } from '../stores/inbox.ts';
 import AppIcon from './AppIcon.vue';
 
 const route = useRoute();
+const inbox = useInboxStore();
 const active = computed(() => activeTabFor(route.name?.toString()));
 </script>
 
@@ -18,7 +20,12 @@ const active = computed(() => activeTabFor(route.name?.toString()));
       :class="{ active: active === item.name, primary: item.name === 'add' }"
       :aria-current="active === item.name ? 'page' : undefined"
     >
-      <span class="glyph"><AppIcon :name="item.icon" :size="item.name === 'add' ? 26 : 24" /></span>
+      <span class="glyph">
+        <AppIcon :name="item.icon" :size="item.name === 'add' ? 26 : 24" />
+        <span v-if="item.name === 'inbox' && inbox.count" class="count" data-testid="inbox-badge"
+          >{{ inbox.count > 99 ? '99+' : inbox.count }}<span class="sr-only">건</span></span
+        >
+      </span>
       <span class="label">{{ item.label }}</span>
     </RouterLink>
   </nav>
@@ -33,10 +40,9 @@ const active = computed(() => activeTabFor(route.name?.toString()));
   grid-template-columns: repeat(5, 1fr);
   height: var(--tabbar-height);
   padding: 0 var(--safe-right) var(--safe-bottom) var(--safe-left);
-  background: color-mix(in srgb, var(--surface) 92%, transparent);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: var(--surface);
   border-top: 1px solid var(--border);
+  box-shadow: 0 -1px 6px rgb(0 0 0 / 6%);
 }
 .tab {
   display: flex;
@@ -53,6 +59,26 @@ const active = computed(() => activeTabFor(route.name?.toString()));
 .tab.active {
   color: var(--accent);
   font-weight: 700;
+}
+.glyph {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+.count {
+  position: absolute;
+  top: -4px;
+  right: -12px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--error);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
 }
 .tab.primary .glyph {
   display: grid;

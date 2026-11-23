@@ -8,6 +8,7 @@ import {
   TRANSACTION_STATUSES,
   TRANSACTION_TYPES,
   currentYearMonth,
+  normalizeMerchant,
   isYearMonth,
   toLocalDate,
   type EntryDefaults,
@@ -21,6 +22,7 @@ import type { UserRow } from '../auth/sessions.ts';
 import type { AppContext } from '../context.ts';
 import { accounts, categories, transactions, users } from '../db/schema.ts';
 import { errors } from '../http/errors.ts';
+import { categorize } from '../ledger/categorize.ts';
 import { parse } from '../http/validation.ts';
 import {
   entryDefaults,
@@ -172,6 +174,14 @@ export function transactionRoutes(ctx: AppContext): FastifyPluginAsync {
         ownerUserId: body.ownerUserId ?? user.id,
         isPrivate: body.isPrivate,
       };
+      // A merchant without a category is categorised automatically (DESIGN 6.4).
+      if (next.categoryId === null && body.merchant && body.type !== 'transfer') {
+        next.categoryId = categorize(ctx.db, {
+          merchant: body.merchant,
+          type: body.type,
+          viewerId: next.ownerUserId,
+        }).categoryId;
+      }
       validateReferences(ctx, user, next);
       const occurredAt = body.occurredAt ?? new Date(ctx.now());
       const now = new Date(ctx.now());
@@ -183,6 +193,7 @@ export function transactionRoutes(ctx: AppContext): FastifyPluginAsync {
           occurredAt,
           occurredDate: toLocalDate(occurredAt),
           merchant: body.merchant,
+          merchantKey: body.merchant ? normalizeMerchant(body.merchant) : null,
           memo: body.memo,
           status: body.status,
           source: 'manual',
@@ -246,6 +257,12 @@ export function transactionRoutes(ctx: AppContext): FastifyPluginAsync {
           occurredAt,
           occurredDate: toLocalDate(occurredAt),
           merchant: body.merchant === undefined ? prev.merchant : body.merchant,
+          merchantKey:
+            body.merchant === undefined
+              ? prev.merchantKey
+              : body.merchant
+                ? normalizeMerchant(body.merchant)
+                : null,
           memo: body.memo === undefined ? prev.memo : body.memo,
           status: body.status ?? prev.status,
           updatedAt: new Date(ctx.now()),

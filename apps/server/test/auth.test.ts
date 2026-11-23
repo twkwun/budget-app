@@ -93,6 +93,7 @@ describe('access control defaults', () => {
       'POST /api/auth/recovery',
       'POST /api/invite/:token/accept',
       'POST /api/setup',
+      'POST /api/webhook/sms',
     ]);
     const anon = t.client('10.0.0.4');
     for (const route of t.routeAccess.filter((r) => r.auth !== 'public')) {

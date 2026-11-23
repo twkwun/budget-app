@@ -4,8 +4,6 @@ import { useAuthStore } from '../stores/auth.ts';
 
 const auth = useAuthStore();
 const later = [
-  { label: '문자 전달 토큰', stage: '4단계' },
-  { label: '분류 규칙', stage: '4단계' },
   { label: '예산', stage: '6단계' },
   { label: '백업', stage: '이후 단계' },
 ];
@@ -33,6 +31,20 @@ const later = [
         <RouterLink to="/settings/categories" class="row" data-testid="settings-categories-link">
           <span>분류</span>
           <span class="muted small">지출·수입 분류 추가, 이름 변경, 정리</span>
+          <AppIcon name="chevron" :size="18" class="chevron" />
+        </RouterLink>
+      </li>
+      <li>
+        <RouterLink to="/settings/sms" class="row" data-testid="settings-sms-link">
+          <span>문자 전달</span>
+          <span class="muted small">아이폰 단축어 설정, 토큰, 문자 테스트</span>
+          <AppIcon name="chevron" :size="18" class="chevron" />
+        </RouterLink>
+      </li>
+      <li>
+        <RouterLink to="/settings/rules" class="row" data-testid="settings-rules-link">
+          <span>분류 규칙</span>
+          <span class="muted small">가맹점별 자동 분류, 기본 키워드</span>
           <AppIcon name="chevron" :size="18" class="chevron" />
         </RouterLink>
       </li>

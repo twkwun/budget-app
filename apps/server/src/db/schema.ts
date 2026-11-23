@@ -30,6 +30,7 @@ import type {
   AccountKind,
   CategoryKind,
   ImportBatchStatus,
+  RawRecordIssue,
   RawRecordSource,
   RawRecordStatus,
   RuleMatchType,
@@ -183,6 +184,11 @@ export const webhookTokens = sqliteTable(
     tokenHint: text('token_hint'),
     createdAt: createdAt(),
     lastReceivedAt: timestamp('last_received_at'),
+    /** Messages accepted as card notifications (stored). */
+    receivedCount: integer('received_count').notNull().default(0),
+    /** Messages discarded unstored because they were not card notifications. */
+    ignoredCount: integer('ignored_count').notNull().default(0),
+    lastIgnoredAt: timestamp('last_ignored_at'),
     revokedAt: timestamp('revoked_at'),
   },
   (t) => [index('webhook_tokens_user_idx').on(t.userId)],
@@ -222,6 +228,10 @@ export const categoryRules = sqliteTable(
     /** Higher wins. User rules are evaluated before built-in keyword rules. */
     priority: integer('priority').notNull().default(0),
     isSystem: bool('is_system').notNull().default(false),
+    /** Stable key for built-in keyword rules (seeding stays idempotent). */
+    systemKey: text('system_key').unique(),
+    /** Built-in rules can be switched off instead of deleted. */
+    disabledAt: timestamp('disabled_at'),
     createdByUserId: integer('created_by_user_id').references(() => users.id, {
       onDelete: 'set null',
     }),
@@ -272,6 +282,8 @@ export const transactions = sqliteTable(
     /** Amount before partial cancellations; null when never reduced. */
     originalAmount: integer('original_amount'),
     merchant: text('merchant'),
+    /** normalizeMerchant(merchant), for rule matching and "same merchant" history. */
+    merchantKey: text('merchant_key'),
     memo: text('memo'),
     /** Null means uncategorized (미분류). */
     categoryId: integer('category_id').references(() => categories.id, { onDelete: 'set null' }),
@@ -299,6 +311,7 @@ export const transactions = sqliteTable(
     index('transactions_owner_occurred_idx').on(t.ownerUserId, t.occurredAt),
     index('transactions_category_idx').on(t.categoryId),
     index('transactions_merchant_idx').on(t.merchant),
+    index('transactions_merchant_key_idx').on(t.merchantKey, t.occurredAt),
     index('transactions_approval_idx').on(t.accountId, t.approvalNo),
     index('transactions_dedupe_idx').on(t.accountId, t.occurredDate, t.amount),
     check('transactions_amount_check', sql`amount >= 0`),
@@ -329,6 +342,10 @@ export const rawRecords = sqliteTable(
     receivedAt: timestamp('received_at').notNull().default(nowMs),
     /** Original SMS text, or the source spreadsheet row serialized as JSON. */
     rawText: text('raw_text').notNull(),
+    /** Sender number/name as reported by the shortcut, if any. */
+    sender: text('sender'),
+    /** Receive time reported by the client, used for redelivery detection. */
+    clientReceivedAt: timestamp('client_received_at'),
     /** SHA-256 of the normalized raw text, to detect exact re-deliveries. */
     contentHash: text('content_hash').notNull(),
     status: text('status').$type<RawRecordStatus>().notNull().default('received'),
@@ -340,9 +357,18 @@ export const rawRecords = sqliteTable(
       onDelete: 'set null',
     }),
     processedAt: timestamp('processed_at'),
+    /**
+     * Open 인박스 item for this record: `unparsed`, `unmatched_card`,
+     * `unmatched_cancel` or `ambiguous_duplicate`; null when nothing is pending.
+     */
+    issue: text('issue').$type<RawRecordIssue>(),
+    issueData: text('issue_data', { mode: 'json' }).$type<Record<string, unknown>>(),
+    resolvedAt: timestamp('resolved_at'),
   },
   (t) => [
     index('raw_records_status_idx').on(t.status),
+    index('raw_records_issue_idx').on(t.issue, t.resolvedAt),
+    index('raw_records_token_hash_idx').on(t.webhookTokenId, t.contentHash),
     index('raw_records_transaction_idx').on(t.transactionId),
     index('raw_records_hash_idx').on(t.contentHash),
     index('raw_records_batch_idx').on(t.importBatchId),

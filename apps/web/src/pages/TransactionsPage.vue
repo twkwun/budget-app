@@ -23,11 +23,13 @@ import {
   type ListFilters,
 } from '../ledger/filters.ts';
 import { dayLabel, signedAmount, timeLabel } from '../ledger/format.ts';
+import { useInboxStore } from '../stores/inbox.ts';
 import { useLedgerStore } from '../stores/ledger.ts';
 
 const route = useRoute();
 const router = useRouter();
 const ledger = useLedgerStore();
+const inbox = useInboxStore();
 
 const filters = computed(() => filtersFromQuery(route.query));
 const items = ref<TransactionInfo[]>([]);
@@ -167,6 +169,7 @@ function removeChip(key: keyof ListFilters): void {
 function changed(): void {
   editing.value = null;
   void loadFirst();
+  void inbox.refresh();
 }
 </script>
 
@@ -287,6 +290,7 @@ function changed(): void {
             <td class="tabular muted">{{ timeLabel(tx.occurredAt) }}</td>
             <td>
               {{ tx.merchant || '—' }}<span v-if="tx.memo" class="muted"> · {{ tx.memo }}</span>
+              <span v-if="tx.hasSms" class="source" title="카드 문자로 등록·확인됨">문자</span>
             </td>
             <td :class="{ uncategorized: !tx.categoryName && tx.type !== 'transfer' }">
               {{ tx.type === 'transfer' ? '이체' : (tx.categoryName ?? '미분류') }}
@@ -435,6 +439,15 @@ function changed(): void {
 }
 .uncategorized {
   color: var(--warn);
+  font-weight: 600;
+}
+.source {
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 0.72rem;
   font-weight: 600;
 }
 .sentinel {

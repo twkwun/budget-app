@@ -5,7 +5,13 @@ import { useLedgerStore } from '../stores/ledger.ts';
 
 /** `<select>` of categories of one kind, grouped by parent; keeps an archived current value. */
 const model = defineModel<number | null>({ required: true });
-const props = defineProps<{ kind: CategoryKind; keep?: number | null; testid?: string }>();
+const props = defineProps<{
+  kind: CategoryKind;
+  keep?: number | null;
+  testid?: string;
+  /** Label of the empty choice (default 미분류). */
+  emptyLabel?: string;
+}>();
 const ledger = useLedgerStore();
 
 const groups = computed(() =>
@@ -23,7 +29,7 @@ const groups = computed(() =>
 
 <template>
   <select v-model="model" :data-testid="testid">
-    <option :value="null">미분류</option>
+    <option :value="null">{{ emptyLabel ?? '미분류' }}</option>
     <optgroup v-for="g in groups" :key="g.root.id" :label="g.root.name">
       <option :value="g.root.id">{{ g.root.name }} (전체)</option>
       <option v-for="c in g.children" :key="c.id" :value="c.id">{{ c.name }}</option>

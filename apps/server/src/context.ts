@@ -18,6 +18,10 @@ export interface AppContext {
     authByIp: RateLimiter;
     /** Password and recovery attempts, keyed by login name. */
     byLoginName: RateLimiter;
+    /** SMS webhook, keyed by client IP (also counts bad tokens). */
+    webhookByIp: RateLimiter;
+    /** SMS webhook, keyed by token id. */
+    webhookByToken: RateLimiter;
   };
   webauthn: {
     rpName: string;
@@ -46,6 +50,8 @@ export function createContext(options: ContextOptions): AppContext {
     limits: {
       authByIp: new RateLimiter(30, 5 * 60 * 1000, now),
       byLoginName: new RateLimiter(10, 15 * 60 * 1000, now),
+      webhookByIp: new RateLimiter(120, 10 * 60 * 1000, now),
+      webhookByToken: new RateLimiter(60, 10 * 60 * 1000, now),
     },
     webauthn: {
       rpName: '가계부',

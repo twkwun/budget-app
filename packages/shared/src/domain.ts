@@ -25,6 +25,15 @@ export type RawRecordSource = (typeof RAW_RECORD_SOURCES)[number];
 export const RAW_RECORD_STATUSES = ['received', 'parsed', 'linked', 'failed', 'ignored'] as const;
 export type RawRecordStatus = (typeof RAW_RECORD_STATUSES)[number];
 
+/** Open 인박스 items attached to a raw record. */
+export const RAW_RECORD_ISSUES = [
+  'unparsed',
+  'unmatched_card',
+  'unmatched_cancel',
+  'ambiguous_duplicate',
+] as const;
+export type RawRecordIssue = (typeof RAW_RECORD_ISSUES)[number];
+
 export const CATEGORY_KINDS = ['expense', 'income'] as const;
 export type CategoryKind = (typeof CATEGORY_KINDS)[number];
 

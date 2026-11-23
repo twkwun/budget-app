@@ -2,6 +2,8 @@
 import { computed, ref, watch } from 'vue';
 import {
   EDITABLE_STATUSES,
+  isAggregatorMerchant,
+  suggestRulePattern,
   TRANSACTION_STATUS_LABELS,
   type EditableStatus,
   type TransactionInfo,
@@ -29,12 +31,24 @@ const occurredLocal = ref(toLocalInput(tx.occurredAt));
 const merchant = ref(tx.merchant ?? '');
 const memo = ref(tx.memo ?? '');
 const status = ref<EditableStatus>(tx.status === 'pending' ? 'confirmed' : tx.status);
+const remember = ref(false);
 const busy = ref(false);
 const error = ref('');
 
 watch(type, (next, prev) => {
   if (next !== prev) categoryId.value = null;
 });
+
+/** DESIGN 6.4: after re-categorising an entry with a merchant, offer to remember it. */
+const canRemember = computed(
+  () =>
+    type.value !== 'transfer' &&
+    categoryId.value !== null &&
+    categoryId.value !== tx.categoryId &&
+    !!merchant.value.trim() &&
+    !isAggregatorMerchant(merchant.value),
+);
+const rulePattern = computed(() => suggestRulePattern(merchant.value));
 
 const accounts = computed(() =>
   ledger.accounts.filter((a) => !a.archived || a.id === tx.accountId),
@@ -66,6 +80,13 @@ const save = () =>
       memo: memo.value,
       status: status.value,
     });
+    if (remember.value && canRemember.value && categoryId.value) {
+      await api.post('/rules', {
+        pattern: rulePattern.value,
+        categoryId: categoryId.value,
+        applyToExisting: true,
+      });
+    }
   });
 
 function remove(): void {
@@ -90,6 +111,10 @@ function remove(): void {
           :keep="tx.categoryId"
           testid="edit-category"
         />
+      </label>
+      <label v-if="canRemember" class="remember" data-testid="remember-rule">
+        <input v-model="remember" type="checkbox" />
+        <span>이 가맹점은 앞으로도 이렇게 (‘{{ rulePattern }}’이 들어간 가맹점은 자동 분류)</span>
       </label>
       <label class="field">
         <span>가맹점·내용</span>
@@ -165,6 +190,19 @@ function remove(): void {
 </template>
 
 <style scoped>
+.remember {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 10px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  font-size: 0.85rem;
+}
+.remember input {
+  width: auto;
+  margin-top: 2px;
+}
 .grow {
   flex: 1;
 }

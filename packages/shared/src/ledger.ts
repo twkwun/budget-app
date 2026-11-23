@@ -117,6 +117,8 @@ export interface TransactionInfo {
   source: TransactionSource;
   installmentMonths: number | null;
   isPrivate: boolean;
+  /** A card message (문자) is linked to this transaction. */
+  hasSms: boolean;
   createdAt: string;
   updatedAt: string;
 }

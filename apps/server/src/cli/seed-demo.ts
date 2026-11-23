@@ -12,6 +12,7 @@ import {
   addDays,
   addMonths,
   currentYearMonth,
+  normalizeMerchant,
   parseLocalDate,
   toLocalDate,
   zonedTimeToUtc,
@@ -24,6 +25,7 @@ import { openDatabase, type AppDatabase } from '../db/client.ts';
 import { runMigrations } from '../db/migrate.ts';
 import * as s from '../db/schema.ts';
 import { seedDefaultCategories } from '../db/seed.ts';
+import { seedKeywordRules } from '../ledger/categorize.ts';
 
 export const DEMO_PASSWORD = 'demo-pass-1234';
 
@@ -188,6 +190,7 @@ function wipe(db: AppDatabase): void {
 
 export async function seedDemo(db: AppDatabase, now = Date.now(), hasher = new PasswordHasher()) {
   seedDefaultCategories(db);
+  seedKeywordRules(db);
   const catId = new Map(
     db
       .select({ id: s.categories.id, key: s.categories.systemKey })
@@ -271,6 +274,7 @@ export async function seedDemo(db: AppDatabase, now = Date.now(), hasher = new P
     if (at.getTime() > now) return;
     rows.push({
       ...values,
+      merchantKey: values.merchant ? normalizeMerchant(values.merchant) : null,
       occurredAt: at,
       occurredDate: toLocalDate(at),
       source: 'manual',

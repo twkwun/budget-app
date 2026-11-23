@@ -68,7 +68,7 @@ onBeforeUnmount(() => {
   flex: 1;
   min-width: 0;
   padding: calc(16px + var(--safe-top)) calc(16px + var(--safe-right))
-    calc(var(--tabbar-height) + var(--safe-bottom) + 24px) calc(16px + var(--safe-left));
+    calc(var(--tabbar-height) + var(--safe-bottom) + 32px) calc(16px + var(--safe-left));
 }
 @media (min-width: 720px) {
   .main {

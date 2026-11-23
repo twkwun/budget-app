@@ -17,7 +17,8 @@
     "test": "vitest run",
     "backup": "node --conditions=@budget/source --env-file-if-exists=.env src/cli/backup.ts",
     "db:generate": "drizzle-kit generate",
-    "seed:demo": "node --conditions=@budget/source --env-file-if-exists=.env src/cli/seed-demo.ts"
+    "seed:demo": "node --conditions=@budget/source --env-file-if-exists=.env src/cli/seed-demo.ts",
+    "reprocess": "node --conditions=@budget/source --env-file-if-exists=.env src/cli/reprocess.ts"
   },
   "dependencies": {
     "@budget/shared": "workspace:*",

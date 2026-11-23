@@ -34,7 +34,9 @@ export type ApiErrorCode =
   | 'passkey_invalid'
   | 'category_name_taken'
   | 'category_invalid'
-  | 'account_invalid';
+  | 'account_invalid'
+  | 'invalid_token'
+  | 'rule_invalid';
 
 export interface ApiErrorBody {
   error: {
