@@ -21,10 +21,13 @@ import { alias } from 'drizzle-orm/sqlite-core';
 import {
   addDays,
   addMonths,
+  cardBillingMonth,
   daysInMonth,
   monthRange,
   type CategoryShare,
+  type ListBasis,
   type DayTotal,
+  type LocalDate,
   type MonthSummary,
   type TransactionInfo,
   type TransactionSource,
@@ -47,6 +50,8 @@ const sumOf = (type: TransactionType) =>
 
 export interface ListFilters {
   month: YearMonth;
+  /** `billing`: card spending by the month its bill is paid (결제월), the rest by date. */
+  basis?: ListBasis;
   type?: TransactionType;
   /** A category id (a parent includes its children), or 'none' for 미분류. */
   category?: number | 'none';
@@ -82,13 +87,48 @@ function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, (c) => `\\${c}`);
 }
 
-function filterConditions(db: AppDatabase, viewerId: number, f: ListFilters): SQL[] {
-  const { start, end } = monthRange(f.month);
-  const where: SQL[] = [
-    visibleTo(viewerId),
-    gte(transactions.occurredAt, new Date(start)),
-    lt(transactions.occurredAt, new Date(end)),
+/**
+ * 결제월 of a transaction paid by a card with a payment day, else null.
+ * Same rule as cardBillingMonth() in @budget/shared, evaluated by SQLite.
+ */
+const billingMonthSql = sql<
+  string | null
+>`(select case when a.kind = 'card' and a.billing_day is not null and a.cutoff_day is not null then strftime('%Y-%m', ${transactions.occurredDate}, 'start of month', '+' || ((case when cast(substr(${transactions.occurredDate}, 9, 2) as integer) > a.cutoff_day then 1 else 0 end) + (case when a.billing_day > a.cutoff_day then 0 else 1 end)) || ' months') end from ${accounts} a where a.id = ${transactions.accountId})`;
+
+/** Month a transaction counts in: its 결제월 for `billing` (cards with a payment day), else its date's. */
+export function monthOfSql(basis: ListBasis = 'date'): SQL<YearMonth> {
+  const byDate = sql<YearMonth>`substr(${transactions.occurredDate}, 1, 7)`;
+  return basis === 'billing' ? sql<YearMonth>`coalesce(${billingMonthSql}, ${byDate})` : byDate;
+}
+
+/**
+ * Day the money leaves: for `billing`, card spending falls on the card's
+ * payment day of its 결제월 (the last day in shorter months); else its date.
+ */
+function dayOfSql(basis: ListBasis): SQL<LocalDate> {
+  if (basis !== 'billing') return sql<LocalDate>`${transactions.occurredDate}`;
+  return sql<LocalDate>`coalesce((select ${billingMonthSql} || '-' || printf('%02d', min(a.billing_day, cast(strftime('%d', ${billingMonthSql} || '-01', '+1 month', '-1 day') as integer))) from ${accounts} a where a.id = ${transactions.accountId}), ${transactions.occurredDate})`;
+}
+
+/** Transactions counted in the months `from`–`to` (inclusive) under a basis. */
+export function periodConditions(from: YearMonth, to: YearMonth, basis: ListBasis = 'date'): SQL[] {
+  if (basis === 'billing') {
+    // A card bill pays spending from at most two months earlier.
+    return [
+      gte(transactions.occurredDate, `${addMonths(from, -3)}-01`),
+      lt(transactions.occurredDate, `${addMonths(to, 1)}-01`),
+      gte(monthOfSql('billing'), from),
+      lte(monthOfSql('billing'), to),
+    ];
+  }
+  return [
+    gte(transactions.occurredAt, new Date(monthRange(from).start)),
+    lt(transactions.occurredAt, new Date(monthRange(to).end)),
   ];
+}
+
+function filterConditions(db: AppDatabase, viewerId: number, f: ListFilters): SQL[] {
+  const where: SQL[] = [visibleTo(viewerId), ...periodConditions(f.month, f.month, f.basis)];
   if (f.type) where.push(eq(transactions.type, f.type));
   if (f.status) where.push(eq(transactions.status, f.status));
   if (f.accountId) where.push(eq(transactions.accountId, f.accountId));
@@ -128,6 +168,9 @@ function selectInfo(db: AppDatabase) {
       parentName: parent.name,
       parentId: parent.id,
       accountName: accounts.name,
+      accountKind: accounts.kind,
+      billingDay: accounts.billingDay,
+      cutoffDay: accounts.cutoffDay,
       ownerName: owner.displayName,
       hasSms: sql<number>`exists (select 1 from ${rawRecords} where ${rawRecords.transactionId} = ${transactions.id} and ${rawRecords.source} = 'sms')`,
       rawSources: sql<
@@ -172,6 +215,11 @@ function toInfo(r: InfoRow): TransactionInfo {
     topCategoryId: t.categoryId === null ? null : (r.parentId ?? t.categoryId),
     accountId: t.accountId,
     accountName: r.accountName ?? null,
+    accountKind: r.accountKind ?? null,
+    billingMonth:
+      r.accountKind === 'card' && r.billingDay && r.cutoffDay
+        ? cardBillingMonth(t.occurredDate, r.billingDay, r.cutoffDay)
+        : null,
     ownerUserId: t.ownerUserId,
     ownerName: r.ownerName,
     status: t.status,
@@ -251,13 +299,30 @@ export function listTransactions(
   return { items, nextCursor, days, totals };
 }
 
-function monthWhere(viewerId: number, month: YearMonth, ownerId: number | null): SQL[] {
-  const { start, end } = monthRange(month);
-  const where = [
-    visibleTo(viewerId),
-    gte(transactions.occurredAt, new Date(start)),
-    lt(transactions.occurredAt, new Date(end)),
-  ];
+/** Ids of every transaction matching the filters (for "select all"), newest first. */
+export function listTransactionIds(
+  db: AppDatabase,
+  viewerId: number,
+  filters: ListFilters,
+  limit: number,
+): number[] {
+  return db
+    .select({ id: transactions.id })
+    .from(transactions)
+    .where(and(...filterConditions(db, viewerId, filters)))
+    .orderBy(desc(transactions.occurredAt), desc(transactions.id))
+    .limit(limit)
+    .all()
+    .map((r) => r.id);
+}
+
+function monthWhere(
+  viewerId: number,
+  month: YearMonth,
+  ownerId: number | null,
+  basis: ListBasis,
+): SQL[] {
+  const where = [visibleTo(viewerId), ...periodConditions(month, month, basis)];
   if (ownerId !== null) where.push(eq(transactions.ownerUserId, ownerId));
   return where;
 }
@@ -311,23 +376,25 @@ export function monthSummary(
   viewerId: number,
   month: YearMonth,
   ownerId: number | null,
+  basis: ListBasis = 'date',
 ): MonthSummary {
-  const where = monthWhere(viewerId, month, ownerId);
+  const where = monthWhere(viewerId, month, ownerId, basis);
   const previousMonth = addMonths(month, -1);
   const current = totalsFor(db, where);
-  const previous = totalsFor(db, monthWhere(viewerId, previousMonth, ownerId));
+  const previous = totalsFor(db, monthWhere(viewerId, previousMonth, ownerId, basis));
 
+  const day = dayOfSql(basis);
   const byDay = new Map(
     db
       .select({
-        date: transactions.occurredDate,
+        date: day,
         expense: sumOf('expense'),
         income: sumOf('income'),
         count: sql<number>`count(*)`,
       })
       .from(transactions)
       .where(and(...where))
-      .groupBy(transactions.occurredDate)
+      .groupBy(day)
       .all()
       .map((d) => [d.date, d]),
   );
@@ -348,6 +415,7 @@ export function monthSummary(
 
   return {
     month,
+    basis,
     owner: ownerId ?? 'all',
     expense: current.expense,
     income: current.income,

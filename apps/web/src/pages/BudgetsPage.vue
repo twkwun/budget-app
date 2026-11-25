@@ -14,11 +14,25 @@ import { errorMessage } from '../auth/messages.ts';
 import AmountInput from '../components/AmountInput.vue';
 import BottomSheet from '../components/BottomSheet.vue';
 import BudgetMeter from '../components/BudgetMeter.vue';
+import BudgetMonthsView from '../components/BudgetMonthsView.vue';
 import MonthNav from '../components/MonthNav.vue';
 import { monthLabel } from '../ledger/format.ts';
 
 const route = useRoute();
 const router = useRouter();
+
+type View = 'month' | 'months';
+/** 이 달 (set and follow one month) or 월별 비교 (many months side by side). */
+const view = computed<View>({
+  get: () => (route.query.view === 'months' ? 'months' : 'month'),
+  set: (v) =>
+    void router.replace({
+      query:
+        v === 'months'
+          ? { view: 'months' }
+          : { month: route.query.month === undefined ? undefined : route.query.month },
+    }),
+});
 
 const month = computed<YearMonth>({
   get: () => {
@@ -47,8 +61,12 @@ async function load(): Promise<void> {
     loading.value = false;
   }
 }
-watch(month, () => void load());
-onMounted(() => void load());
+watch([month, view], () => {
+  if (view.value === 'month') void load();
+});
+onMounted(() => {
+  if (view.value === 'month') void load();
+});
 
 /** Categories without a budget this month, for 분류 예산 추가. */
 const unbudgeted = computed(() => {
@@ -106,103 +124,130 @@ const changedAt = (iso: string) => {
 
 <template>
   <section class="page budgets-page" data-testid="budgets-page">
-    <header class="head">
-      <MonthNav v-model="month" :max="maxMonth" />
-      <p class="muted small">
-        예산은 정한 달부터 다시 바꿀 때까지 매달 그대로 적용됩니다. 바꿔도 지난 달은 그대로입니다.
-        분류 예산에는 하위 분류의 지출도 포함되고, 이체는 빠집니다.
+    <div class="segmented" role="radiogroup" aria-label="보기">
+      <button
+        type="button"
+        role="radio"
+        :aria-checked="view === 'month'"
+        :class="{ on: view === 'month' }"
+        data-testid="view-month"
+        @click="view = 'month'"
+      >
+        이 달
+      </button>
+      <button
+        type="button"
+        role="radio"
+        :aria-checked="view === 'months'"
+        :class="{ on: view === 'months' }"
+        data-testid="view-months"
+        @click="view = 'months'"
+      >
+        월별 비교
+      </button>
+    </div>
+
+    <BudgetMonthsView v-if="view === 'months'" />
+
+    <template v-else>
+      <header class="head">
+        <MonthNav v-model="month" :max="maxMonth" />
+        <p class="muted small">
+          예산은 정한 달부터 다시 바꿀 때까지 매달 그대로 적용됩니다. 바꿔도 지난 달은 그대로입니다.
+          분류 예산에는 하위 분류의 지출도 포함되고, 이체는 빠집니다.
+        </p>
+      </header>
+
+      <p v-if="notice" class="notice" role="status">{{ notice }}</p>
+      <p v-if="error" class="error-text" role="alert">
+        {{ error }} <button type="button" class="link-button" @click="load">다시 시도</button>
       </p>
-    </header>
+      <p v-if="loading && !data" class="muted">불러오는 중…</p>
 
-    <p v-if="notice" class="notice" role="status">{{ notice }}</p>
-    <p v-if="error" class="error-text" role="alert">
-      {{ error }} <button type="button" class="link-button" @click="load">다시 시도</button>
-    </p>
-    <p v-if="loading && !data" class="muted">불러오는 중…</p>
+      <template v-if="data">
+        <section class="card block" aria-labelledby="overall-title">
+          <div class="block-head">
+            <h2 id="overall-title">전체 예산</h2>
+            <button
+              type="button"
+              class="btn btn-small"
+              data-testid="edit-overall"
+              @click="edit(null, '전체 예산', data.overall?.amount ?? 0)"
+            >
+              {{ data.overall ? '변경' : '정하기' }}
+            </button>
+          </div>
+          <BudgetMeter v-if="data.overall" :budget="data.overall" primary />
+          <p v-else class="muted small">
+            {{ monthLabel(month) }}에는 전체 예산이 없습니다. 한 달 동안 쓸 금액을 정해 보세요.
+          </p>
+          <p v-if="data.overall" class="muted tiny">
+            {{ monthLabel(data.overall.since) }}에 정한 금액
+          </p>
+        </section>
 
-    <template v-if="data">
-      <section class="card block" aria-labelledby="overall-title">
-        <div class="block-head">
-          <h2 id="overall-title">전체 예산</h2>
-          <button
-            type="button"
-            class="btn btn-small"
-            data-testid="edit-overall"
-            @click="edit(null, '전체 예산', data.overall?.amount ?? 0)"
-          >
-            {{ data.overall ? '변경' : '정하기' }}
-          </button>
-        </div>
-        <BudgetMeter v-if="data.overall" :budget="data.overall" primary />
-        <p v-else class="muted small">
-          {{ monthLabel(month) }}에는 전체 예산이 없습니다. 한 달 동안 쓸 금액을 정해 보세요.
-        </p>
-        <p v-if="data.overall" class="muted tiny">
-          {{ monthLabel(data.overall.since) }}에 정한 금액
-        </p>
-      </section>
-
-      <section class="card block" aria-labelledby="category-title">
-        <h2 id="category-title">분류 예산</h2>
-        <ul v-if="data.categories.length" class="meters">
-          <li v-for="b in data.categories" :key="b.categoryId ?? 0">
-            <BudgetMeter :budget="b" />
-            <div class="meter-actions">
-              <span class="muted tiny">{{ monthLabel(b.since) }}부터</span>
-              <RouterLink
-                :to="{
-                  path: '/transactions',
-                  query: { month, type: 'expense', category: String(b.categoryId) },
-                }"
-                class="link-button"
-              >
-                내역
-              </RouterLink>
-              <button
-                type="button"
-                class="btn btn-small"
-                :aria-label="`${b.name} 예산 변경`"
-                @click="edit(b.categoryId, b.name, b.amount)"
-              >
-                변경
-              </button>
-            </div>
-          </li>
-        </ul>
-        <p v-else class="muted small">식비처럼 신경 쓰이는 분류에만 따로 정할 수 있습니다.</p>
-        <div v-if="unbudgeted.length" class="add-row">
-          <label class="sr-only" for="budget-category">분류 선택</label>
-          <select id="budget-category" v-model="pickCategory" data-testid="budget-category">
-            <option :value="null" disabled>분류 선택</option>
-            <option v-for="c in unbudgeted" :key="c.id" :value="c.id">{{ c.name }}</option>
-          </select>
-          <button
-            type="button"
-            class="btn"
-            :disabled="pickCategory === null"
-            data-testid="add-category-budget"
-            @click="addCategory"
-          >
-            분류 예산 추가
-          </button>
-        </div>
-      </section>
-
-      <section class="card block" aria-labelledby="history-title">
-        <h2 id="history-title">바꾼 기록</h2>
-        <ul v-if="data.history.length" class="row-list history" data-testid="budget-history">
-          <li v-for="h in data.history" :key="h.id">
-            <div class="row-main">
-              <strong>{{ monthLabel(h.month) }}부터</strong> · {{ h.name }}
-              <div class="row-sub">
-                {{ h.updatedByName ?? '알 수 없음' }} · {{ changedAt(h.updatedAt) }}
+        <section class="card block" aria-labelledby="category-title">
+          <h2 id="category-title">분류 예산</h2>
+          <ul v-if="data.categories.length" class="meters">
+            <li v-for="b in data.categories" :key="b.categoryId ?? 0">
+              <BudgetMeter :budget="b" />
+              <div class="meter-actions">
+                <span class="muted tiny">{{ monthLabel(b.since) }}부터</span>
+                <RouterLink
+                  :to="{
+                    path: '/transactions',
+                    query: { month, type: 'expense', category: String(b.categoryId) },
+                  }"
+                  class="link-button"
+                >
+                  내역
+                </RouterLink>
+                <button
+                  type="button"
+                  class="btn btn-small"
+                  :aria-label="`${b.name} 예산 변경`"
+                  @click="edit(b.categoryId, b.name, b.amount)"
+                >
+                  변경
+                </button>
               </div>
-            </div>
-            <span class="tabular">{{ historyLabel(h.amount) }}</span>
-          </li>
-        </ul>
-        <p v-else class="muted small">아직 정한 예산이 없습니다.</p>
-      </section>
+            </li>
+          </ul>
+          <p v-else class="muted small">식비처럼 신경 쓰이는 분류에만 따로 정할 수 있습니다.</p>
+          <div v-if="unbudgeted.length" class="add-row">
+            <label class="sr-only" for="budget-category">분류 선택</label>
+            <select id="budget-category" v-model="pickCategory" data-testid="budget-category">
+              <option :value="null" disabled>분류 선택</option>
+              <option v-for="c in unbudgeted" :key="c.id" :value="c.id">{{ c.name }}</option>
+            </select>
+            <button
+              type="button"
+              class="btn"
+              :disabled="pickCategory === null"
+              data-testid="add-category-budget"
+              @click="addCategory"
+            >
+              분류 예산 추가
+            </button>
+          </div>
+        </section>
+
+        <section class="card block" aria-labelledby="history-title">
+          <h2 id="history-title">바꾼 기록</h2>
+          <ul v-if="data.history.length" class="row-list history" data-testid="budget-history">
+            <li v-for="h in data.history" :key="h.id">
+              <div class="row-main">
+                <strong>{{ monthLabel(h.month) }}부터</strong> · {{ h.name }}
+                <div class="row-sub">
+                  {{ h.updatedByName ?? '알 수 없음' }} · {{ changedAt(h.updatedAt) }}
+                </div>
+              </div>
+              <span class="tabular">{{ historyLabel(h.amount) }}</span>
+            </li>
+          </ul>
+          <p v-else class="muted small">아직 정한 예산이 없습니다.</p>
+        </section>
+      </template>
     </template>
 
     <BottomSheet
@@ -246,6 +291,28 @@ const changedAt = (iso: string) => {
   display: grid;
   gap: 12px;
   max-width: 720px;
+}
+.segmented {
+  justify-self: start;
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.segmented button {
+  min-height: 40px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-muted);
+  font-weight: 600;
+  cursor: pointer;
+}
+.segmented .on {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 .head {
   display: grid;

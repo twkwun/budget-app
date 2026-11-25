@@ -55,6 +55,8 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,ico,webmanifest}'],
+        // Manual screenshots load only when the manual is opened.
+        globIgnores: ['manual/**'],
         navigateFallback: '/index.html',
         // API calls must always hit the network and never get the app shell.
         navigateFallbackDenylist: [/^\/api(?:\/|$)/],

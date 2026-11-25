@@ -1,7 +1,9 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import {
+  BULK_MAX,
   EDITABLE_STATUSES,
+  LIST_BASES,
   MAX_AMOUNT,
   MEMO_MAX_LENGTH,
   MERCHANT_MAX_LENGTH,
@@ -11,6 +13,7 @@ import {
   normalizeMerchant,
   isYearMonth,
   toLocalDate,
+  type BulkTransactionResult,
   type EntryDefaults,
   type HomeSummary,
   type TransactionPage,
@@ -25,7 +28,13 @@ import { errors } from '../http/errors.ts';
 import { categorize } from '../ledger/categorize.ts';
 import { parse } from '../http/validation.ts';
 import { homeSummary } from '../planning/summary.ts';
-import { entryDefaults, getTransaction, listTransactions, visibleTo } from '../ledger/queries.ts';
+import {
+  entryDefaults,
+  getTransaction,
+  listTransactionIds,
+  listTransactions,
+  visibleTo,
+} from '../ledger/queries.ts';
 
 type TxRow = typeof transactions.$inferSelect;
 
@@ -60,8 +69,9 @@ const fields = {
 const monthSchema = z.string().refine(isYearMonth, 'must be YYYY-MM');
 const optionalInt = z.coerce.number().int().positive().optional();
 
-const listQuery = z.object({
+const filterQuery = z.object({
   month: monthSchema,
+  basis: z.enum(LIST_BASES).optional(),
   type: z.enum(TRANSACTION_TYPES).optional(),
   category: z.union([z.literal('none'), z.coerce.number().int().positive()]).optional(),
   accountId: optionalInt,
@@ -70,9 +80,29 @@ const listQuery = z.object({
   minAmount: z.coerce.number().int().min(0).max(MAX_AMOUNT).optional(),
   maxAmount: z.coerce.number().int().min(0).max(MAX_AMOUNT).optional(),
   q: z.string().max(100).optional(),
+});
+const listQuery = filterQuery.extend({
   cursor: z.string().max(200).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
 });
+
+const bulkBody = z
+  .object({
+    ids: z.array(z.number().int().positive()).min(1).max(BULK_MAX),
+    categoryId: fields.categoryId.optional(),
+    accountId: fields.accountId.optional(),
+    type: fields.type.optional(),
+    status: fields.status.optional(),
+  })
+  .strict()
+  .refine(
+    (b) =>
+      b.categoryId !== undefined ||
+      b.accountId !== undefined ||
+      b.type !== undefined ||
+      b.status !== undefined,
+    'Nothing to change',
+  );
 
 interface Final {
   type: TransactionType;
@@ -135,6 +165,77 @@ export function transactionRoutes(ctx: AppContext): FastifyPluginAsync {
       const { user } = currentAuth(request);
       const q = parse(listQuery, request.query);
       return listTransactions(ctx.db, user.id, q, { cursor: q.cursor, limit: q.limit });
+    });
+
+    /** Ids of everything the filters match, so the list can select all of it at once. */
+    app.get('/transactions/ids', async (request) => {
+      const { user } = currentAuth(request);
+      const q = parse(filterQuery, request.query);
+      const ids = listTransactionIds(ctx.db, user.id, q, BULK_MAX + 1);
+      return { ids: ids.slice(0, BULK_MAX), truncated: ids.length > BULK_MAX };
+    });
+
+    /**
+     * Change several transactions at once (일괄 수정). A category also sets
+     * the type to the category's kind (e.g. an 이체 becomes 지출); a type
+     * change without a category clears categories that no longer fit.
+     */
+    app.post('/transactions/bulk', async (request): Promise<BulkTransactionResult> => {
+      const { user } = currentAuth(request);
+      const body = parse(bulkBody, request.body);
+      const ids = [...new Set(body.ids)];
+
+      let categoryKind: TransactionType | null = null;
+      if (body.categoryId != null) {
+        const cat = ctx.db
+          .select()
+          .from(categories)
+          .where(eq(categories.id, body.categoryId))
+          .get();
+        if (!cat || cat.archivedAt) throw errors.conflict('category_invalid', 'Unknown category');
+        if (body.type !== undefined && body.type !== cat.kind) {
+          throw errors.conflict('category_invalid', 'Category kind does not match the type');
+        }
+        categoryKind = cat.kind;
+      }
+      if (body.accountId != null) {
+        const acc = ctx.db.select().from(accounts).where(eq(accounts.id, body.accountId)).get();
+        if (!acc || acc.archivedAt) throw errors.conflict('account_invalid', 'Unknown account');
+      }
+
+      const rows: TxRow[] = [];
+      for (let i = 0; i < ids.length; i += 500) {
+        rows.push(
+          ...ctx.db
+            .select()
+            .from(transactions)
+            .where(and(inArray(transactions.id, ids.slice(i, i + 500)), visibleTo(user.id)))
+            .all(),
+        );
+      }
+      if (rows.length !== ids.length) throw errors.notFound('Transaction not found');
+
+      const now = new Date(ctx.now());
+      ctx.db.transaction((tx) => {
+        for (const row of rows) {
+          const type = categoryKind ?? body.type ?? row.type;
+          let categoryId = body.categoryId === undefined ? row.categoryId : body.categoryId;
+          if (type === 'transfer' || (body.categoryId === undefined && type !== row.type)) {
+            categoryId = null;
+          }
+          tx.update(transactions)
+            .set({
+              type,
+              categoryId,
+              accountId: body.accountId === undefined ? row.accountId : body.accountId,
+              status: body.status ?? row.status,
+              updatedAt: now,
+            })
+            .where(eq(transactions.id, row.id))
+            .run();
+        }
+      });
+      return { updated: rows.length };
     });
 
     app.get('/transactions/:id', async (request) => {
@@ -281,10 +382,18 @@ export function transactionRoutes(ctx: AppContext): FastifyPluginAsync {
         z.object({
           month: monthSchema.default(currentYearMonth(ctx.now())),
           owner: z.union([z.literal('all'), z.coerce.number().int().positive()]).default('all'),
+          basis: z.enum(LIST_BASES).default('date'),
         }),
         request.query,
       );
-      return homeSummary(ctx.db, user.id, q.month, q.owner === 'all' ? null : q.owner, ctx.now());
+      return homeSummary(
+        ctx.db,
+        user.id,
+        q.month,
+        q.owner === 'all' ? null : q.owner,
+        ctx.now(),
+        q.basis,
+      );
     });
 
     app.get('/entry-defaults', async (request): Promise<EntryDefaults> =>

@@ -4,7 +4,8 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "types": ["node"],
-    "noEmit": true
+    "noEmit": true,
+    "allowImportingTsExtensions": true
   },
-  "include": ["vite.config.ts", "vitest.config.ts", "pwa-assets.config.ts"]
+  "include": ["vite.config.ts", "vitest.config.ts", "pwa-assets.config.ts", "scripts/**/*.ts"]
 }

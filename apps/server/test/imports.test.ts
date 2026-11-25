@@ -582,3 +582,54 @@ describe('undo keeps what other sources also reported', () => {
     expect(t.txs()[0]).toMatchObject({ source: 'sms', merchant: '구름카페 강남점' });
   });
 });
+
+describe('linking 결제수단 labels after import', () => {
+  it('lists labels left without an account and links or creates accounts for them', async () => {
+    const t = await setup();
+    const res = await t.upload(t.admin, makeBanksalad(BASE));
+    const id = res.json<ImportPreview>().batch.id;
+    // Skip account mapping at import time.
+    await t.admin.put(`/api/imports/${id}/accounts`, {
+      mappings: [
+        { label: CARD, accountId: null },
+        { label: BANK, accountId: null },
+        { label: '현금', accountId: null },
+      ],
+    });
+    await t.apply(id);
+    expect(t.txs().every((x) => x.accountId === null)).toBe(true);
+
+    const labels = (await t.admin.get('/api/accounts/unlinked-labels')).json<
+      { label: string; rows: number; suggestedKind: string; suggestedAccountId: number | null }[]
+    >();
+    expect(labels.map((l) => l.label)).toEqual([CARD, BANK, '현금']);
+    expect(labels[0]).toMatchObject({ suggestedKind: 'card', suggestedAccountId: t.card.id });
+    expect(labels[1]).toMatchObject({ suggestedKind: 'bank' });
+
+    const link = await t.admin.post('/api/accounts/link-labels', {
+      items: [
+        { label: CARD, accountId: t.card.id },
+        { label: '현금', create: { kind: 'cash', name: '현금' } },
+      ],
+    });
+    expect(link.statusCode, link.body).toBe(200);
+    const linked = link.json<{ created: number; linked: number }>();
+    expect(linked.created).toBe(1);
+    const cardRows = t.txs().filter((x) => x.accountId === t.card.id);
+    expect(cardRows.length).toBeGreaterThan(0);
+    expect(linked.linked).toBe(cardRows.length + 1);
+
+    const left = (await t.admin.get('/api/accounts/unlinked-labels')).json<{ label: string }[]>();
+    expect(left.map((l) => l.label)).toEqual([BANK]);
+
+    // The label is remembered for the next import.
+    const again = await t.upload(t.admin, makeBanksalad(BASE.slice(0, 1)));
+    const mapped = again.json<ImportPreview>().accounts.find((a) => a.label === CARD);
+    expect(mapped).toMatchObject({ accountId: t.card.id, saved: true });
+
+    const bad = await t.admin.post('/api/accounts/link-labels', {
+      items: [{ label: BANK }],
+    });
+    expect(bad.statusCode).toBe(400);
+  });
+});

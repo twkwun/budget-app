@@ -2,16 +2,22 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
+  BULK_MAX,
   formatKrw,
+  monthLabel,
   TRANSACTION_STATUS_LABELS,
   TRANSACTION_TYPE_LABELS,
   type DayTotal,
+  type ListBasis,
   type TransactionInfo,
   type TransactionPage,
   type YearMonth,
 } from '@budget/shared';
 import { api } from '../api/client.ts';
 import { errorMessage } from '../auth/messages.ts';
+import AccountTag from '../components/AccountTag.vue';
+import BasisSwitch from '../components/BasisSwitch.vue';
+import BulkEditSheet from '../components/BulkEditSheet.vue';
 import FilterSheet from '../components/FilterSheet.vue';
 import MonthNav from '../components/MonthNav.vue';
 import TransactionForm from '../components/TransactionForm.vue';
@@ -43,6 +49,12 @@ const editing = ref<TransactionInfo | null>(null);
 const search = ref(filters.value.q ?? '');
 const sentinel = ref<HTMLElement | null>(null);
 const wide = ref(false);
+/** Selection mode for 일괄 수정. */
+const selecting = ref(false);
+const selected = ref(new Set<number>());
+const bulkOpen = ref(false);
+const notice = ref('');
+let lastPicked: number | null = null;
 let generation = 0;
 let observer: IntersectionObserver | null = null;
 const media = window.matchMedia('(min-width: 1024px)');
@@ -92,6 +104,11 @@ function setFilters(next: ListFilters): void {
   void router.replace({ query: filtersToQuery(next) });
 }
 
+const basis = computed<ListBasis>({
+  get: () => filters.value.basis,
+  set: (b) => setFilters({ ...filters.value, basis: b }),
+});
+
 const month = computed<YearMonth>({
   get: () => filters.value.month,
   set: (m) => setFilters({ ...filters.value, month: m }),
@@ -105,10 +122,99 @@ watch(search, (q) => {
 
 watch(
   () => route.query,
-  () => void loadFirst(),
+  () => {
+    selected.value = new Set();
+    lastPicked = null;
+    void loadFirst();
+  },
 );
 
+// ------------------------------------------------------------ selection
+
+function startSelecting(): void {
+  selecting.value = true;
+  notice.value = '';
+}
+
+function stopSelecting(): void {
+  selecting.value = false;
+  selected.value = new Set();
+  lastPicked = null;
+}
+
+/** Click on a row: open it, or toggle it while selecting (Shift selects a range). */
+function pick(tx: TransactionInfo, event?: MouseEvent | KeyboardEvent): void {
+  if (!selecting.value) {
+    editing.value = tx;
+    return;
+  }
+  const next = new Set(selected.value);
+  const index = items.value.findIndex((i) => i.id === tx.id);
+  if (event?.shiftKey && lastPicked !== null) {
+    const from = items.value.findIndex((i) => i.id === lastPicked);
+    if (from >= 0) {
+      const on = !next.has(tx.id);
+      const [a, b] = from < index ? [from, index] : [index, from];
+      for (const i of items.value.slice(a, b + 1)) {
+        if (on) next.add(i.id);
+        else next.delete(i.id);
+      }
+    }
+  } else if (next.has(tx.id)) next.delete(tx.id);
+  else next.add(tx.id);
+  lastPicked = tx.id;
+  selected.value = next;
+}
+
+function dayState(list: TransactionInfo[]): 'all' | 'some' | 'none' {
+  const n = list.filter((t) => selected.value.has(t.id)).length;
+  return n === 0 ? 'none' : n === list.length ? 'all' : 'some';
+}
+
+function toggleDay(list: TransactionInfo[]): void {
+  const next = new Set(selected.value);
+  const on = dayState(list) !== 'all';
+  for (const t of list) {
+    if (on) next.add(t.id);
+    else next.delete(t.id);
+  }
+  selected.value = next;
+}
+
+const allSelected = computed(
+  () => !!totals.value && selected.value.size >= totals.value.count && totals.value.count > 0,
+);
+
+async function selectAll(): Promise<void> {
+  error.value = '';
+  try {
+    const res = await api.get<{ ids: number[]; truncated: boolean }>(
+      `/transactions/ids?${query(filters.value)}`,
+    );
+    selected.value = new Set(res.ids);
+    if (res.truncated)
+      notice.value = `한 번에 ${BULK_MAX.toLocaleString()}건까지 고를 수 있습니다.`;
+  } catch (e) {
+    error.value = errorMessage(e);
+  }
+}
+
+const selectedKnown = computed(() => items.value.filter((t) => selected.value.has(t.id)));
+
+function bulkDone(updated: number): void {
+  bulkOpen.value = false;
+  stopSelecting();
+  notice.value = `${updated.toLocaleString()}건을 고쳤습니다.`;
+  void loadFirst();
+  void inbox.refresh();
+}
+
+function onKey(event: KeyboardEvent): void {
+  if (event.key === 'Escape' && selecting.value && !bulkOpen.value) stopSelecting();
+}
+
 onMounted(() => {
+  document.addEventListener('keydown', onKey);
   onMedia();
   media.addEventListener('change', onMedia);
   void ledger.load().catch(() => {});
@@ -122,6 +228,7 @@ onMounted(() => {
   if (sentinel.value) observer.observe(sentinel.value);
 });
 onBeforeUnmount(() => {
+  document.removeEventListener('keydown', onKey);
   observer?.disconnect();
   media.removeEventListener('change', onMedia);
 });
@@ -174,7 +281,7 @@ function changed(): void {
 </script>
 
 <template>
-  <section class="page wide-page" data-testid="transactions-page">
+  <section class="page wide-page" :class="{ selecting }" data-testid="transactions-page">
     <header class="head">
       <MonthNav v-model="month" />
       <div class="tools">
@@ -195,6 +302,15 @@ function changed(): void {
         >
           필터<span v-if="filterCount" class="badge badge-accent">{{ filterCount }}</span>
         </button>
+        <button
+          type="button"
+          class="btn select-btn"
+          :class="{ 'btn-primary': selecting }"
+          data-testid="select-mode"
+          @click="selecting ? stopSelecting() : startSelecting()"
+        >
+          {{ selecting ? '선택 끝' : '선택' }}
+        </button>
       </div>
       <div v-if="chips.length" class="chips">
         <button
@@ -207,10 +323,19 @@ function changed(): void {
           {{ c.label }} ✕
         </button>
       </div>
-      <p v-if="totals" class="totals tabular muted" data-testid="list-totals">
-        {{ totals.count }}건 · 지출 {{ formatKrw(totals.expense) }} · 수입
-        {{ formatKrw(totals.income) }}
+      <div class="summary-row">
+        <p v-if="totals" class="totals tabular muted" data-testid="list-totals">
+          {{ totals.count }}건 · 지출
+          <span class="money-expense">{{ formatKrw(totals.expense) }}</span> · 수입
+          <span class="money-income">{{ formatKrw(totals.income) }}</span>
+        </p>
+        <BasisSwitch v-model="basis" />
+      </div>
+      <p v-if="basis === 'billing'" class="hint muted">
+        카드는 결제일에 돈이 빠져나가는 달({{ monthLabel(month) }} 결제분)로, 나머지는 쓴 날로
+        모았습니다. 카드에 결제일이 없으면 쓴 날 기준입니다.
       </p>
+      <p v-if="notice" class="notice" role="status">{{ notice }}</p>
     </header>
 
     <p v-if="error" class="error-text" role="alert">{{ error }}</p>
@@ -231,13 +356,22 @@ function changed(): void {
     <div v-else-if="!wide" class="groups">
       <section v-for="g in groups" :key="g.date" class="card group">
         <header class="day">
+          <button
+            v-if="selecting"
+            type="button"
+            class="day-check"
+            :aria-label="`${dayLabel(g.date)} 모두 선택`"
+            @click="toggleDay(g.items)"
+          >
+            <span class="box" :class="dayState(g.items)" />
+          </button>
           <strong>{{ dayLabel(g.date) }}</strong>
           <span class="tabular muted">
-            <template v-if="dayIndex.get(g.date)?.expense"
-              >-{{ formatKrw(dayIndex.get(g.date)!.expense) }}</template
+            <span v-if="dayIndex.get(g.date)?.expense" class="money-expense"
+              >-{{ formatKrw(dayIndex.get(g.date)!.expense) }}</span
             >
-            <template v-if="dayIndex.get(g.date)?.income">
-              +{{ formatKrw(dayIndex.get(g.date)!.income) }}</template
+            <span v-if="dayIndex.get(g.date)?.income" class="money-income">
+              +{{ formatKrw(dayIndex.get(g.date)!.income) }}</span
             >
           </span>
         </header>
@@ -246,7 +380,9 @@ function changed(): void {
           :key="tx.id"
           :tx="tx"
           :show-owner="multipleMembers"
-          @open="editing = tx"
+          :selectable="selecting"
+          :selected="selected.has(tx.id)"
+          @open="(e) => pick(tx, e)"
         />
       </section>
     </div>
@@ -256,10 +392,14 @@ function changed(): void {
       <table class="table" data-testid="tx-table">
         <thead>
           <tr>
+            <th v-if="selecting" scope="col" class="sel">
+              <span class="sr-only">선택</span>
+            </th>
             <th scope="col">시간</th>
             <th scope="col">내용</th>
             <th scope="col">분류</th>
             <th scope="col">수단</th>
+            <th scope="col">결제월</th>
             <th scope="col">구성원</th>
             <th scope="col">상태</th>
             <th scope="col" class="num">금액</th>
@@ -267,13 +407,23 @@ function changed(): void {
         </thead>
         <tbody v-for="g in groups" :key="g.date">
           <tr class="day-row">
-            <th colspan="6" scope="rowgroup">{{ dayLabel(g.date) }}</th>
-            <td class="num tabular muted">
-              <template v-if="dayIndex.get(g.date)?.expense"
-                >-{{ formatKrw(dayIndex.get(g.date)!.expense) }}</template
+            <td v-if="selecting" class="sel">
+              <button
+                type="button"
+                class="day-check"
+                :aria-label="`${dayLabel(g.date)} 모두 선택`"
+                @click="toggleDay(g.items)"
               >
-              <template v-if="dayIndex.get(g.date)?.income">
-                +{{ formatKrw(dayIndex.get(g.date)!.income) }}</template
+                <span class="box" :class="dayState(g.items)" />
+              </button>
+            </td>
+            <th colspan="7" scope="rowgroup">{{ dayLabel(g.date) }}</th>
+            <td class="num tabular muted">
+              <span v-if="dayIndex.get(g.date)?.expense" class="money-expense"
+                >-{{ formatKrw(dayIndex.get(g.date)!.expense) }}</span
+              >
+              <span v-if="dayIndex.get(g.date)?.income" class="money-income">
+                +{{ formatKrw(dayIndex.get(g.date)!.income) }}</span
               >
             </td>
           </tr>
@@ -281,12 +431,17 @@ function changed(): void {
             v-for="tx in g.items"
             :key="tx.id"
             class="tx"
-            :class="{ cancelled: tx.status === 'cancelled' }"
+            :class="{ cancelled: tx.status === 'cancelled', selected: selected.has(tx.id) }"
             tabindex="0"
             data-testid="tx-row"
-            @click="editing = tx"
-            @keydown.enter="editing = tx"
+            :aria-selected="selecting ? selected.has(tx.id) : undefined"
+            @click="pick(tx, $event)"
+            @keydown.enter="pick(tx, $event)"
+            @keydown.space.prevent="selecting && pick(tx, $event)"
           >
+            <td v-if="selecting" class="sel">
+              <span class="box" :class="{ all: selected.has(tx.id) }" aria-hidden="true" />
+            </td>
             <td class="tabular muted">{{ timeLabel(tx.occurredAt) }}</td>
             <td>
               {{ tx.merchant || '—' }}<span v-if="tx.memo" class="muted"> · {{ tx.memo }}</span>
@@ -304,7 +459,16 @@ function changed(): void {
             <td :class="{ uncategorized: !tx.categoryName && tx.type !== 'transfer' }">
               {{ tx.type === 'transfer' ? '이체' : (tx.categoryName ?? '미분류') }}
             </td>
-            <td>{{ tx.accountName ?? '—' }}</td>
+            <td class="pay"><AccountTag :name="tx.accountName" :kind="tx.accountKind" /></td>
+            <td
+              class="tabular"
+              :class="{ later: tx.billingMonth && tx.billingMonth !== tx.occurredDate.slice(0, 7) }"
+            >
+              <template v-if="tx.billingMonth">{{
+                monthLabel(tx.billingMonth, tx.occurredDate.slice(0, 7))
+              }}</template>
+              <span v-else class="muted">—</span>
+            </td>
             <td>{{ tx.ownerName }}</td>
             <td>{{ tx.status === 'confirmed' ? '' : TRANSACTION_STATUS_LABELS[tx.status] }}</td>
             <td class="num tabular amount" :class="tx.type">
@@ -321,6 +485,47 @@ function changed(): void {
       더 보기
     </button>
 
+    <div v-if="selecting" class="select-bar" role="toolbar" data-testid="select-bar">
+      <span class="count tabular"
+        ><strong>{{ selected.size.toLocaleString() }}</strong
+        >건 선택</span
+      >
+      <button
+        v-if="totals && !allSelected"
+        type="button"
+        class="btn btn-small"
+        data-testid="select-all"
+        @click="selectAll"
+      >
+        {{ totals.count.toLocaleString() }}건 모두
+      </button>
+      <button
+        v-if="selected.size"
+        type="button"
+        class="btn btn-small"
+        @click="selected = new Set()"
+      >
+        해제
+      </button>
+      <span class="grow" />
+      <button
+        type="button"
+        class="btn btn-primary"
+        :disabled="!selected.size"
+        data-testid="bulk-edit"
+        @click="bulkOpen = true"
+      >
+        한꺼번에 고치기
+      </button>
+    </div>
+
+    <BulkEditSheet
+      v-if="bulkOpen"
+      :ids="[...selected]"
+      :known="selectedKnown"
+      @close="bulkOpen = false"
+      @done="bulkDone"
+    />
     <FilterSheet
       v-if="filterOpen"
       :filters="filters"
@@ -357,8 +562,101 @@ function changed(): void {
 .search {
   flex: 1;
 }
-.filter-btn {
+.filter-btn,
+.select-btn {
   flex: none;
+}
+.summary-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.hint {
+  margin: 0;
+  font-size: 0.8rem;
+}
+.sel {
+  width: 28px;
+  padding-right: 0 !important;
+}
+.day-check {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+.box {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  vertical-align: middle;
+}
+.box.all {
+  border-color: var(--accent);
+  background: var(--accent)
+    url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M3 8.5l3 3 7-7" fill="none" stroke="white" stroke-width="2.2"/></svg>')
+    center / 12px no-repeat;
+}
+.box.some {
+  border-color: var(--accent);
+  background: linear-gradient(var(--accent), var(--accent)) center / 8px 2px no-repeat;
+}
+.day .day-check {
+  margin: -8px 6px -8px -4px;
+}
+.day {
+  align-items: center;
+}
+.day strong {
+  flex: 1;
+}
+.tx.selected {
+  background: var(--accent-soft);
+}
+/* Shift-click selects a range of rows, not text. */
+.selecting .tx,
+.selecting .group {
+  user-select: none;
+}
+.pay {
+  max-width: 260px;
+  overflow: hidden;
+}
+.later {
+  color: var(--accent);
+  font-weight: 600;
+}
+.select-bar {
+  position: sticky;
+  bottom: calc(var(--tabbar-height) + var(--safe-bottom) + 8px);
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 12%);
+}
+@media (min-width: 720px) {
+  .select-bar {
+    bottom: 16px;
+  }
+}
+.select-bar .grow {
+  flex: 1;
 }
 .chips {
   display: flex;
@@ -439,10 +737,8 @@ function changed(): void {
 .amount {
   font-weight: 700;
 }
-.amount.income {
-  color: var(--accent);
-}
-.cancelled td {
+.cancelled td,
+.cancelled .amount {
   color: var(--text-muted);
   text-decoration: line-through;
 }

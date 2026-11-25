@@ -159,6 +159,11 @@ export const accounts = sqliteTable(
     last4: text('last4'),
     /** Card payment day of month (결제일). */
     billingDay: integer('billing_day'),
+    /**
+     * Last day of the usage period billed on the payment day (이용기간 마감일);
+     * 31 means the month's last day. Set whenever billing_day is set.
+     */
+    cutoffDay: integer('cutoff_day'),
     sortOrder: integer('sort_order').notNull().default(0),
     archivedAt: timestamp('archived_at'),
     createdAt: createdAt(),
@@ -169,6 +174,7 @@ export const accounts = sqliteTable(
     index('accounts_issuer_last4_idx').on(t.issuer, t.last4),
     check('accounts_last4_check', sql`last4 is null or last4 glob '[0-9][0-9][0-9][0-9]'`),
     check('accounts_billing_day_check', sql`billing_day is null or billing_day between 1 and 31`),
+    check('accounts_cutoff_day_check', sql`cutoff_day is null or cutoff_day between 1 and 31`),
   ],
 );
 

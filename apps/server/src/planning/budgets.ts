@@ -3,11 +3,14 @@
  * expense categories. A budget set for a month stays in force for later months
  * until it is changed; changing it in a month never rewrites earlier months.
  */
-import { and, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 import {
   monthRange,
   toYearMonth,
   type BudgetChange,
+  type BudgetMonthCell,
+  type BudgetMonthRow,
+  type BudgetMonthsReport,
   type BudgetPace,
   type BudgetProgress,
   type BudgetSetting,
@@ -18,13 +21,23 @@ import {
 import type { AppDatabase } from '../db/client.ts';
 import { budgets, categories, users } from '../db/schema.ts';
 import { errors } from '../http/errors.ts';
+import { categorySeries, monthTotals, monthsBetween, rangeWhere } from './stats.ts';
 
 /** Spending more than this share ahead of the month's progress counts as "ahead". */
 export const PACE_TOLERANCE = 0.1;
 
-/** Budgets in force for `month`: per category, the latest row at or before it (amount > 0). */
-export function budgetsInForce(db: AppDatabase, month: YearMonth): BudgetSetting[] {
-  const rows = db
+interface BudgetRow {
+  categoryId: number | null;
+  amount: number;
+  since: YearMonth;
+  name: string | null;
+  parentId: number | null;
+  archivedAt: Date | null;
+}
+
+/** Every budget change up to `through`, oldest month first. */
+function budgetRowsThrough(db: AppDatabase, through: YearMonth): BudgetRow[] {
+  return db
     .select({
       categoryId: budgets.categoryId,
       amount: budgets.amount,
@@ -35,11 +48,23 @@ export function budgetsInForce(db: AppDatabase, month: YearMonth): BudgetSetting
     })
     .from(budgets)
     .leftJoin(categories, eq(budgets.categoryId, categories.id))
-    .where(
-      sql`${budgets.month} = (select max(b2.month) from budgets b2 where b2.month <= ${month} and b2.category_id is ${budgets.categoryId})`,
-    )
+    .where(sql`${budgets.month} <= ${through}`)
+    .orderBy(asc(budgets.month))
     .all();
-  return rows
+}
+
+/**
+ * Budgets in force for `month` from `rows` (oldest first): per category, the
+ * latest row at or before it, when its amount is above 0 and the category can
+ * still carry a budget (top-level and not archived).
+ */
+export function resolveBudgets(rows: BudgetRow[], month: YearMonth): BudgetSetting[] {
+  const latest = new Map<number | null, BudgetRow>();
+  for (const row of rows) {
+    if (row.since > month) break;
+    latest.set(row.categoryId, row);
+  }
+  return [...latest.values()]
     .filter((r) => r.amount > 0)
     .filter((r) => r.categoryId === null || (r.parentId === null && r.archivedAt === null))
     .map((r) => ({
@@ -48,6 +73,11 @@ export function budgetsInForce(db: AppDatabase, month: YearMonth): BudgetSetting
       amount: r.amount,
       since: r.since,
     }));
+}
+
+/** Budgets in force for `month`: per category, the latest row at or before it (amount > 0). */
+export function budgetsInForce(db: AppDatabase, month: YearMonth): BudgetSetting[] {
+  return resolveBudgets(budgetRowsThrough(db, month), month);
 }
 
 /** Share (0–1) of the month elapsed at `now`, or null when `now` is outside the month. */
@@ -112,6 +142,106 @@ export function monthBudgets(
           (a.categoryId ?? 0) - (b.categoryId ?? 0),
       )
       .map((s) => withPace(progress(s, spentBy.get(s.categoryId) ?? 0))),
+  };
+}
+
+function percentOf(spent: number, budget: number): number {
+  return Math.floor((spent / budget) * 100);
+}
+
+/**
+ * 월별 비교: the budgets in force each month of `from`–`to` against the
+ * family's spending the viewer can see. Spending is summed exactly like the
+ * statistics (and like `monthBudgets`): expense only, cancelled left out,
+ * a category with its children.
+ */
+export function budgetMonths(
+  db: AppDatabase,
+  viewerId: number,
+  from: YearMonth,
+  to: YearMonth,
+  now: number,
+): BudgetMonthsReport {
+  const months = monthsBetween(from, to);
+  const currentMonth = toYearMonth(now);
+  const rows = budgetRowsThrough(db, to);
+  const inForce = months.map((m) => new Map(resolveBudgets(rows, m).map((s) => [s.categoryId, s])));
+
+  const where = rangeWhere(viewerId, from, to, null);
+  const totalSpent = monthTotals(db, where, months).map((m) => m.expense);
+  const spentBy = new Map(categorySeries(db, where, months).map((c) => [c.categoryId, c.values]));
+
+  const rowFor = (categoryId: number | null, spent: number[]): BudgetMonthRow => {
+    const cells: BudgetMonthCell[] = months.map((month, i) => {
+      const setting = inForce[i]?.get(categoryId);
+      const amount = setting?.amount ?? null;
+      const value = spent[i] ?? 0;
+      const current = month === currentMonth;
+      const elapsed = current ? monthElapsed(month, now) : null;
+      return {
+        month,
+        budget: amount,
+        spent: value,
+        percent: amount === null ? null : percentOf(value, amount),
+        over: amount !== null && value > amount,
+        current,
+        pace: amount !== null && elapsed !== null ? paceOf(amount, value, elapsed) : null,
+      };
+    });
+    const budgeted = cells.filter((c) => c.budget !== null);
+    const finished = budgeted.filter((c) => c.month < currentMonth);
+    const budgetTotal = finished.reduce((n, c) => n + (c.budget ?? 0), 0);
+    const name =
+      categoryId === null
+        ? '전체 예산'
+        : (inForce.findLast((m) => m.has(categoryId))?.get(categoryId)?.name ?? '알 수 없음');
+    return {
+      categoryId,
+      name,
+      cells,
+      summary: {
+        budgetedMonths: budgeted.length,
+        overMonths: budgeted.filter((c) => c.over).length,
+        avgPercent: finished.length
+          ? Math.round(finished.reduce((n, c) => n + (c.percent ?? 0), 0) / finished.length)
+          : null,
+        budgetTotal,
+        spentTotal: finished.reduce((n, c) => n + c.spent, 0),
+      },
+    };
+  };
+
+  const budgeted = new Set<number>();
+  for (const month of inForce) {
+    for (const id of month.keys()) if (id !== null) budgeted.add(id);
+  }
+  const sortOrder = new Map(
+    db
+      .select({ id: categories.id, sortOrder: categories.sortOrder })
+      .from(categories)
+      .where(isNull(categories.parentId))
+      .all()
+      .map((c) => [c.id, c.sortOrder]),
+  );
+  const categoryRows = [...budgeted]
+    .sort((a, b) => (sortOrder.get(a) ?? 0) - (sortOrder.get(b) ?? 0) || a - b)
+    .map((id) => rowFor(id, spentBy.get(id) ?? []));
+
+  return {
+    from,
+    to,
+    months,
+    overall: inForce.some((m) => m.has(null)) ? rowFor(null, totalSpent) : null,
+    categories: categoryRows,
+    totalSpent,
+    unbudgetedSpent: months.map(
+      (_, i) =>
+        (totalSpent[i] ?? 0) -
+        categoryRows.reduce(
+          (n, r) => n + (r.cells[i]?.budget !== null ? (r.cells[i]?.spent ?? 0) : 0),
+          0,
+        ),
+    ),
   };
 }
 

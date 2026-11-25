@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import AppIcon from '../components/AppIcon.vue';
-import { MORE_ITEMS } from '../nav.ts';
+import { HELP_ITEMS, MORE_ITEMS } from '../nav.ts';
+import { APP_VERSION } from '../changelog.ts';
 </script>
 
 <template>
@@ -11,6 +12,19 @@ import { MORE_ITEMS } from '../nav.ts';
         <RouterLink :to="item.path" class="row">
           <AppIcon :name="item.icon" :size="20" />
           <span>{{ item.label }}</span>
+          <AppIcon name="chevron" :size="18" class="chevron" />
+        </RouterLink>
+      </li>
+    </ul>
+    <h2 class="section-title">도움말</h2>
+    <ul class="card list">
+      <li v-for="item in HELP_ITEMS" :key="item.name">
+        <RouterLink :to="item.path" class="row" :data-testid="`more-${item.name}-link`">
+          <AppIcon :name="item.icon" :size="20" />
+          <span>{{ item.label }}</span>
+          <span v-if="item.name === 'changelog'" class="muted small tabular"
+            >v{{ APP_VERSION }}</span
+          >
           <AppIcon name="chevron" :size="18" class="chevron" />
         </RouterLink>
       </li>
@@ -34,6 +48,9 @@ import { MORE_ITEMS } from '../nav.ts';
 }
 li + li .row {
   border-top: 1px solid var(--border);
+}
+.small {
+  font-size: 0.8rem;
 }
 .chevron {
   margin-left: auto;

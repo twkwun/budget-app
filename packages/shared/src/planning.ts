@@ -1,7 +1,7 @@
 /** Wire types for budgets, 고정지출 and statistics. */
 import type { LocalDate, YearMonth } from './date.ts';
 import type { RecurringStatus } from './domain.ts';
-import type { MonthSummary } from './ledger.ts';
+import type { ListBasis, MonthSummary } from './ledger.ts';
 
 /**
  * A budget is set for a month and stays in force for later months until it is
@@ -60,6 +60,63 @@ export interface BudgetOverview extends MonthBudgets {
   /** Top-level expense categories that can carry a budget. */
   categoryOptions: { id: number; name: string }[];
   history: BudgetChange[];
+}
+
+/** Months a 월별 비교 report may cover, and its default. */
+export const BUDGET_MONTHS_MIN = 3;
+export const BUDGET_MONTHS_MAX = 24;
+export const BUDGET_MONTHS_DEFAULT = 12;
+
+/** One month of one budget row in the 월별 비교 report. */
+export interface BudgetMonthCell {
+  month: YearMonth;
+  /** Budget in force that month; null when there was none. */
+  budget: number | null;
+  /** Spending counted against it (a category includes its children). */
+  spent: number;
+  /** spent / budget × 100, rounded down; null without a budget. */
+  percent: number | null;
+  over: boolean;
+  /** The household's current month: still in progress. */
+  current: boolean;
+  /** Only for the current month with a budget. */
+  pace: BudgetPace | null;
+}
+
+export interface BudgetMonthRow {
+  /** null = the overall budget. */
+  categoryId: number | null;
+  name: string;
+  cells: BudgetMonthCell[];
+  summary: {
+    /** Months in the range that had a budget (the current month included). */
+    budgetedMonths: number;
+    /** Of those, months that went over (the current month counts once it is over). */
+    overMonths: number;
+    /**
+     * Over finished months with a budget (the month in progress is left out so
+     * it does not pull the figures down): average `percent`, budget and spending.
+     * avgPercent is null when there is no such month.
+     */
+    avgPercent: number | null;
+    budgetTotal: number;
+    spentTotal: number;
+  };
+}
+
+/** Budgets against spending, month by month (family scope). */
+export interface BudgetMonthsReport {
+  from: YearMonth;
+  to: YearMonth;
+  months: YearMonth[];
+  /** null when no month in the range had an overall budget. */
+  overall: BudgetMonthRow | null;
+  /** Categories with a budget in at least one month of the range, in category order. */
+  categories: BudgetMonthRow[];
+  /** Total spending per month. */
+  totalSpent: number[];
+  /** Spending per month outside every category budget (other categories and 미분류). */
+  unbudgetedSpent: number[];
 }
 
 /** Tolerance used when matching a payment to a 고정지출 (±20%). */
@@ -140,6 +197,8 @@ export interface MerchantTotal {
 export interface RangeStats {
   from: YearMonth;
   to: YearMonth;
+  /** `billing`: card spending counted in its 결제월. */
+  basis: ListBasis;
   owner: 'all' | number;
   months: MonthTotals[];
   totals: { expense: number; income: number };

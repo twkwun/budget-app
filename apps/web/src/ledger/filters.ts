@@ -4,14 +4,18 @@ import {
   TRANSACTION_TYPES,
   currentYearMonth,
   isYearMonth,
+  type ListBasis,
   type TransactionStatus,
   type TransactionType,
   type YearMonth,
 } from '@budget/shared';
+import { basisFromQuery } from './basis.ts';
 
 /** List filters, mirrored in the URL query so links (e.g. 미분류 on 홈) open a filtered list. */
 export interface ListFilters {
   month: YearMonth;
+  /** `billing`: cards by the month their bill is paid (결제월 기준). */
+  basis: ListBasis;
   type?: TransactionType;
   category?: number | 'none';
   accountId?: number;
@@ -35,6 +39,7 @@ export function filtersFromQuery(q: LocationQuery): ListFilters {
   const category = str(q.category);
   return {
     month: month && isYearMonth(month) ? month : currentYearMonth(),
+    basis: basisFromQuery(q),
     type: type && TRANSACTION_TYPES.includes(type) ? type : undefined,
     status: status && TRANSACTION_STATUSES.includes(status) ? status : undefined,
     category: category === 'none' ? 'none' : int(category) || undefined,
@@ -54,7 +59,7 @@ export function filtersToQuery(f: ListFilters): Record<string, string> {
   return out;
 }
 
-/** Number of active filters besides month and search text. */
+/** Number of active filters besides month, basis and search text. */
 export function activeFilterCount(f: ListFilters): number {
   return (
     ['type', 'category', 'accountId', 'ownerId', 'status', 'minAmount', 'maxAmount'] as const

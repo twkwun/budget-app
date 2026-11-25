@@ -4,13 +4,13 @@
  * Only expense and income are summed (이체 is excluded everywhere), and
  * cancelled transactions are left out.
  */
-import { and, asc, eq, gte, inArray, isNotNull, lt, ne, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, ne, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import {
   addMonths,
-  monthRange,
   parseYearMonth,
   type CategorySeries,
+  type ListBasis,
   type MemberSeries,
   type MerchantTotal,
   type MonthTotals,
@@ -20,12 +20,11 @@ import {
 } from '@budget/shared';
 import type { AppDatabase } from '../db/client.ts';
 import { categories, transactions, users } from '../db/schema.ts';
-import { visibleTo } from '../ledger/queries.ts';
+import { monthOfSql, periodConditions, visibleTo } from '../ledger/queries.ts';
 
 export const MAX_RANGE_MONTHS = 36;
 
 const category = alias(categories, 'category');
-const monthOf = sql<YearMonth>`substr(${transactions.occurredDate}, 1, 7)`;
 const topCategory = sql<number | null>`coalesce(${category.parentId}, ${category.id})`;
 const counted = ne(transactions.status, 'cancelled');
 const sumOf = (type: 'expense' | 'income') =>
@@ -37,16 +36,16 @@ export function monthsBetween(from: YearMonth, to: YearMonth): YearMonth[] {
   return months;
 }
 
-function rangeWhere(
+export function rangeWhere(
   viewerId: number,
   from: YearMonth,
   to: YearMonth,
   ownerId: number | null,
+  basis: ListBasis = 'date',
 ): SQL[] {
   const where = [
     visibleTo(viewerId),
-    gte(transactions.occurredAt, new Date(monthRange(from).start)),
-    lt(transactions.occurredAt, new Date(monthRange(to).end)),
+    ...periodConditions(from, to, basis),
     inArray(transactions.type, ['expense', 'income']),
     counted,
   ];
@@ -54,7 +53,13 @@ function rangeWhere(
   return where;
 }
 
-function monthTotals(db: AppDatabase, where: SQL[], months: YearMonth[]): MonthTotals[] {
+export function monthTotals(
+  db: AppDatabase,
+  where: SQL[],
+  months: YearMonth[],
+  basis: ListBasis = 'date',
+): MonthTotals[] {
+  const monthOf = monthOfSql(basis);
   const rows = new Map(
     db
       .select({ month: monthOf, expense: sumOf('expense'), income: sumOf('income') })
@@ -83,7 +88,13 @@ function categoryNames(db: AppDatabase, ids: number[]): Map<number, string> {
   );
 }
 
-function categorySeries(db: AppDatabase, where: SQL[], months: YearMonth[]): CategorySeries[] {
+export function categorySeries(
+  db: AppDatabase,
+  where: SQL[],
+  months: YearMonth[],
+  basis: ListBasis = 'date',
+): CategorySeries[] {
+  const monthOf = monthOfSql(basis);
   const rows = db
     .select({
       month: monthOf,
@@ -120,7 +131,13 @@ function categorySeries(db: AppDatabase, where: SQL[], months: YearMonth[]): Cat
   );
 }
 
-function memberSeries(db: AppDatabase, where: SQL[], months: YearMonth[]): MemberSeries[] {
+function memberSeries(
+  db: AppDatabase,
+  where: SQL[],
+  months: YearMonth[],
+  basis: ListBasis,
+): MemberSeries[] {
+  const monthOf = monthOfSql(basis);
   const rows = db
     .select({
       userId: transactions.ownerUserId,
@@ -183,21 +200,23 @@ export function rangeStats(
   from: YearMonth,
   to: YearMonth,
   ownerId: number | null,
+  basis: ListBasis = 'date',
 ): RangeStats {
   const months = monthsBetween(from, to);
-  const where = rangeWhere(viewerId, from, to, ownerId);
-  const series = monthTotals(db, where, months);
+  const where = rangeWhere(viewerId, from, to, ownerId, basis);
+  const series = monthTotals(db, where, months, basis);
   return {
     from,
     to,
+    basis,
     owner: ownerId ?? 'all',
     months: series,
     totals: {
       expense: series.reduce((s, m) => s + m.expense, 0),
       income: series.reduce((s, m) => s + m.income, 0),
     },
-    categories: categorySeries(db, where, months),
-    members: ownerId === null ? memberSeries(db, where, months) : [],
+    categories: categorySeries(db, where, months, basis),
+    members: ownerId === null ? memberSeries(db, where, months, basis) : [],
     merchants: topMerchants(db, where, 10),
   };
 }
@@ -208,9 +227,10 @@ export function yearStats(
   year: number,
   ownerId: number | null,
   currentMonth: YearMonth,
+  basis: ListBasis = 'date',
 ): YearStats {
   const pad = (y: number) => String(y).padStart(4, '0');
-  const current = rangeStats(db, viewerId, `${pad(year)}-01`, `${pad(year)}-12`, ownerId);
+  const current = rangeStats(db, viewerId, `${pad(year)}-01`, `${pad(year)}-12`, ownerId, basis);
   const prevFrom = `${pad(year - 1)}-01`;
   const prevTo = `${pad(year - 1)}-12`;
   // The year in progress is compared with the same months of the previous year.
@@ -219,10 +239,11 @@ export function yearStats(
   const prevThrough = `${pad(year - 1)}-${String(throughMonth).padStart(2, '0')}`;
   const prevMonths = monthTotals(
     db,
-    rangeWhere(viewerId, prevFrom, prevTo, ownerId),
+    rangeWhere(viewerId, prevFrom, prevTo, ownerId, basis),
     monthsBetween(prevFrom, prevTo),
+    basis,
   );
-  const prevWhere = rangeWhere(viewerId, prevFrom, prevThrough, ownerId);
+  const prevWhere = rangeWhere(viewerId, prevFrom, prevThrough, ownerId, basis);
   const compared = prevMonths.slice(0, throughMonth);
   const prevCategories: Record<string, number> = {};
   for (const row of db

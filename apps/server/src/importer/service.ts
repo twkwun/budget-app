@@ -16,6 +16,7 @@
  */
 import { and, asc, eq, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
 import {
+  inferAccountKind,
   isAggregatorMerchant,
   merchantSimilarity,
   normalizeMerchant,
@@ -90,7 +91,7 @@ function fingerprint(identity: string, occurrence: number): string {
   return createHash('sha256').update(`file|${identity}#${occurrence}`).digest('hex');
 }
 
-const normLabel = (s: string) => s.normalize('NFKC').replace(/\s+/g, ' ').trim();
+export const normLabel = (s: string) => s.normalize('NFKC').replace(/\s+/g, ' ').trim();
 
 // ---------------------------------------------------------------- creation
 
@@ -224,13 +225,13 @@ async function prepareBatch(db: AppDatabase, batchId: number, now: number): Prom
 // ---------------------------------------------------------------- mappings
 
 const ISSUER_WORDS: [RegExp, string][] = [
-  [/신한/, 'shinhan'],
+  [/신한|shinhan/i, 'shinhan'],
   [/KB|국민/i, 'kb'],
-  [/삼성/, 'samsung'],
-  [/현대/, 'hyundai'],
-  [/롯데/, 'lotte'],
-  [/하나/, 'hana'],
-  [/우리/, 'woori'],
+  [/삼성|samsung/i, 'samsung'],
+  [/현대|hyundai/i, 'hyundai'],
+  [/롯데|lotte/i, 'lotte'],
+  [/하나|hana/i, 'hana'],
+  [/우리|woori/i, 'woori'],
   [/NH|농협/i, 'nh'],
   [/IBK|기업/i, 'ibk'],
   [/BC|비씨/i, 'bc'],
@@ -238,23 +239,29 @@ const ISSUER_WORDS: [RegExp, string][] = [
   [/토스/, 'toss'],
 ];
 
+/** Issuer code named in a 결제수단 label (신한, KB, …), if any. */
+export function suggestIssuer(label: string): string | null {
+  return ISSUER_WORDS.find(([re]) => re.test(label))?.[1] ?? null;
+}
+
+/** Last four digits in a label (masked digits ignored), if any. */
+export function labelLast4(label: string): string | null {
+  return /(\d{4})(?!.*\d{4})/.exec(label.replace(/[*＊]/g, 'x'))?.[1] ?? null;
+}
+
 /** Suggest an account for a 결제수단 label: issuer and last digits, then name similarity. */
 export function suggestAccount(label: string, all: AccountRow[]): AccountRow | null {
   const active = all.filter((a) => !a.archivedAt);
   if (/현금/.test(label)) return active.find((a) => a.kind === 'cash') ?? null;
-  const issuer = ISSUER_WORDS.find(([re]) => re.test(label))?.[1];
-  const digits = /(\d{4})(?!.*\d{4})/.exec(label.replace(/[*＊]/g, 'x'))?.[1];
+  const issuer = suggestIssuer(label);
+  const digits = labelLast4(label);
   let pool = issuer ? active.filter((a) => a.issuer === issuer) : active;
   if (digits) {
     const byDigits = pool.filter((a) => a.last4 === digits);
     if (byDigits.length === 1) return byDigits[0] ?? null;
     if (byDigits.length > 1) pool = byDigits;
   }
-  const kindHint = /카드/.test(label)
-    ? 'card'
-    : /통장|계좌|은행|입출금/.test(label)
-      ? 'bank'
-      : null;
+  const kindHint = inferAccountKind(label);
   if (kindHint) pool = pool.filter((a) => a.kind === kindHint);
   if (pool.length === 1 && issuer) return pool[0] ?? null;
   const scored = active

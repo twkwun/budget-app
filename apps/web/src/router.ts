@@ -116,6 +116,18 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '더보기' },
   },
   {
+    path: '/manual',
+    name: 'manual',
+    component: () => import('./pages/ManualPage.vue'),
+    meta: { title: '사용자 설명서' },
+  },
+  {
+    path: '/changelog',
+    name: 'changelog',
+    component: () => import('./pages/ChangelogPage.vue'),
+    meta: { title: '버전 이력' },
+  },
+  {
     path: '/setup',
     name: 'setup',
     component: () => import('./pages/auth/SetupPage.vue'),

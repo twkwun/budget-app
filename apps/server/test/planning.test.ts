@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   zonedTimeToUtc,
   type BackupStatus,
+  type BudgetMonthsReport,
   type BudgetOverview,
   type HomeSummary,
   type RangeStats,
@@ -182,6 +183,151 @@ describe('budgets', () => {
     expect(paceOf(100_000, 100_000, 0.9999).status).toBe('ok');
     expect(paceOf(100_000, 100_001, 0.9999).status).toBe('over');
     expect(paceOf(100_000, 50_000, 0.5).expectedSpent).toBe(50_000);
+  });
+});
+
+describe('budget months (월별 비교)', () => {
+  async function report(t: Setup, query: string, client = t.admin) {
+    const res = await client.get(`/api/budgets/months?${query}`);
+    expect(res.statusCode, res.body).toBe(200);
+    return res.json<BudgetMonthsReport>();
+  }
+
+  async function seed() {
+    const t = await ledgerSetup();
+    const food = t.cat('식비');
+    const living = t.cat('생활');
+    await setBudget(t, '2026-08', null, 100_000);
+    await setBudget(t, '2026-08', food, 20_000);
+    await setBudget(t, '2026-10', food, 30_000);
+    await setBudget(t, '2026-09', living, 10_000);
+    await setBudget(t, '2026-11', living, 0);
+    const dining = t.cat('식비/외식');
+    const store = t.cat('생활/편의점');
+    await addTx(t.admin, { amount: 25_000, occurredAt: kst('2026-08-05'), categoryId: dining });
+    await addTx(t.admin, { amount: 5_000, occurredAt: kst('2026-08-06'), categoryId: store });
+    await addTx(t.admin, { amount: 10_000, occurredAt: kst('2026-09-05'), categoryId: food });
+    await addTx(t.admin, { amount: 12_000, occurredAt: kst('2026-09-06'), categoryId: store });
+    await addTx(t.admin, { amount: 3_000, occurredAt: kst('2026-09-07') }); // 미분류
+    await addTx(t.admin, { amount: 30_000, occurredAt: kst('2026-10-05'), categoryId: dining });
+    await addTx(t.admin, { amount: 500_000, occurredAt: kst('2026-10-06'), type: 'transfer' });
+    await addTx(t.admin, {
+      amount: 90_000,
+      occurredAt: kst('2026-10-07'),
+      categoryId: food,
+      status: 'cancelled',
+    });
+    await addTx(t.admin, { amount: 40_000, occurredAt: kst('2026-11-05'), categoryId: dining });
+    await addTx(t.admin, { amount: 4_000, occurredAt: kst('2026-11-06'), categoryId: store });
+    await addTx(t.member, {
+      amount: 4_000,
+      occurredAt: kst('2026-11-07'),
+      categoryId: dining,
+      isPrivate: true,
+    });
+    // Outside the range: must not leak into it.
+    await addTx(t.admin, { amount: 77_000, occurredAt: kst('2026-07-31'), categoryId: dining });
+    return { t, food, living };
+  }
+
+  it('lays budgets against spending month by month', async () => {
+    const { t, food, living } = await seed();
+    const r = await report(t, 'to=2026-11&count=4');
+    expect(r.months).toEqual(['2026-08', '2026-09', '2026-10', '2026-11']);
+    expect(r.totalSpent).toEqual([30_000, 25_000, 30_000, 44_000]);
+
+    expect(r.overall?.cells.map((c) => [c.budget, c.spent, c.percent, c.over])).toEqual([
+      [100_000, 30_000, 30, false],
+      [100_000, 25_000, 25, false],
+      [100_000, 30_000, 30, false],
+      [100_000, 44_000, 44, false],
+    ]);
+    expect(r.overall?.cells.map((c) => c.current)).toEqual([false, false, false, true]);
+    expect(r.overall?.cells[3]?.pace?.status).toBe('ok');
+    expect(r.overall?.cells[2]?.pace).toBeNull();
+    // The month in progress is left out of the average and the sums.
+    expect(r.overall?.summary).toEqual({
+      budgetedMonths: 4,
+      overMonths: 0,
+      avgPercent: 28,
+      budgetTotal: 300_000,
+      spentTotal: 85_000,
+    });
+
+    expect(r.categories.map((c) => [c.categoryId, c.name])).toEqual([
+      [food, '식비'],
+      [living, '생활'],
+    ]);
+    const [foodRow, livingRow] = r.categories;
+    expect(foodRow?.cells.map((c) => [c.budget, c.spent, c.percent, c.over])).toEqual([
+      [20_000, 25_000, 125, true],
+      [20_000, 10_000, 50, false],
+      [30_000, 30_000, 100, false],
+      [30_000, 40_000, 133, true],
+    ]);
+    expect(foodRow?.cells[3]?.pace?.status).toBe('over');
+    expect(foodRow?.summary).toEqual({
+      budgetedMonths: 4,
+      overMonths: 2,
+      avgPercent: 92,
+      budgetTotal: 70_000,
+      spentTotal: 65_000,
+    });
+    // 생활 had a budget in September and October only; spending is shown anyway.
+    expect(livingRow?.cells.map((c) => [c.budget, c.spent, c.percent, c.over])).toEqual([
+      [null, 5_000, null, false],
+      [10_000, 12_000, 120, true],
+      [10_000, 0, 0, false],
+      [null, 4_000, null, false],
+    ]);
+    expect(livingRow?.summary).toMatchObject({ budgetedMonths: 2, overMonths: 1, avgPercent: 60 });
+    // Everything outside a category budget that month: other categories and 미분류.
+    expect(r.unbudgetedSpent).toEqual([5_000, 3_000, 0, 4_000]);
+  });
+
+  it('agrees with the single-month budgets view', async () => {
+    const { t } = await seed();
+    const r = await report(t, 'to=2026-11&count=4');
+    for (const [i, month] of r.months.entries()) {
+      const one = await budgets(t, month);
+      expect(r.overall?.cells[i]?.spent, month).toBe(one.overall?.spent);
+      for (const b of one.categories) {
+        const row = r.categories.find((c) => c.categoryId === b.categoryId);
+        expect(row?.cells[i]).toMatchObject({ budget: b.amount, spent: b.spent, over: b.over });
+      }
+    }
+  });
+
+  it('counts only what the viewer can see', async () => {
+    const { t } = await seed();
+    const member = await report(t, 'to=2026-11&count=4', t.member);
+    expect(member.categories[0]?.cells[3]?.spent).toBe(44_000);
+    expect(member.totalSpent[3]).toBe(48_000);
+  });
+
+  it('defaults to 12 months ending this month, never past it, and validates', async () => {
+    const { t, living } = await seed();
+    const r = await report(t, '');
+    expect(r.months).toHaveLength(12);
+    expect([r.from, r.to]).toEqual(['2025-12', '2026-11']);
+    const future = await report(t, 'to=2027-03&count=3');
+    expect(future.months).toEqual(['2026-09', '2026-10', '2026-11']);
+    for (const query of ['count=2', 'count=25', 'to=2026-13', 'count=x']) {
+      const res = await t.admin.get(`/api/budgets/months?${query}`);
+      expect(res.statusCode, query).toBe(400);
+    }
+
+    // Before any budget there are no rows, but spending is still there.
+    const early = await report(t, 'to=2026-07&count=3');
+    expect(early.overall).toBeNull();
+    expect(early.categories).toEqual([]);
+    expect(early.unbudgetedSpent).toEqual([0, 0, 77_000]);
+
+    // An archived category drops out, as it does on the single-month view.
+    await t.admin.patch(`/api/categories/${living}`, { archived: true });
+    const after = await report(t, 'to=2026-11&count=4');
+    expect(after.categories.map((c) => c.name)).toEqual(['식비']);
+    expect(after.unbudgetedSpent).toEqual([5_000, 15_000, 0, 4_000]);
   });
 });
 

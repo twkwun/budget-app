@@ -6,6 +6,8 @@ export interface ChartTheme {
   muted: string;
   grid: string;
   surface: string;
+  /** Over-budget marks. */
+  error: string;
 }
 
 export function readChartTheme(el: Element = document.documentElement): ChartTheme {
@@ -18,5 +20,6 @@ export function readChartTheme(el: Element = document.documentElement): ChartThe
     muted: v('--text-muted'),
     grid: v('--chart-grid'),
     surface: v('--surface'),
+    error: v('--error'),
   };
 }

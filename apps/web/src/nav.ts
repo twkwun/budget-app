@@ -29,6 +29,12 @@ export const TAB_ITEMS: readonly NavItem[] = [
   { name: 'more', path: '/more', label: '더보기', icon: 'more' },
 ];
 
+/** Help screens: bottom of the sidebar, and a 도움말 group under 더보기. */
+export const HELP_ITEMS: readonly NavItem[] = [
+  { name: 'manual', path: '/manual', label: '사용자 설명서', icon: 'book' },
+  { name: 'changelog', path: '/changelog', label: '버전 이력', icon: 'history' },
+];
+
 const TAB_NAMES = new Set(TAB_ITEMS.map((item) => item.name));
 
 /** Screens reached from the 더보기 tab on phones. */
@@ -39,5 +45,5 @@ export function activeTabFor(routeName: string | null | undefined): string {
   if (!routeName) return '';
   if (routeName.startsWith('settings-')) return 'more';
   if (TAB_NAMES.has(routeName)) return routeName;
-  return MORE_ITEMS.some((item) => item.name === routeName) ? 'more' : '';
+  return [...MORE_ITEMS, ...HELP_ITEMS].some((item) => item.name === routeName) ? 'more' : '';
 }

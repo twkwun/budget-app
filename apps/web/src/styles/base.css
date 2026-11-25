@@ -12,6 +12,10 @@
   --ok: #15803d;
   --warn: #b45309;
   --error: #b91c1c;
+  /* Money by transaction type: 지출 red, 수입 blue, 이체 gray. */
+  --expense: #d03b2f;
+  --income: #1f6feb;
+  --transfer: var(--text-muted);
 
   --sidebar-width: 220px;
   --tabbar-height: 58px;
@@ -46,7 +50,23 @@
     --ok: #4ade80;
     --warn: #fbbf24;
     --error: #f87171;
+    --expense: #ff7b72;
+    --income: #58a6ff;
   }
+}
+
+/* Amount colors by transaction type (내역 amounts, day and month totals). */
+.money-expense,
+.amount.expense {
+  color: var(--expense);
+}
+.money-income,
+.amount.income {
+  color: var(--income);
+}
+.money-transfer,
+.amount.transfer {
+  color: var(--transfer);
 }
 
 *,

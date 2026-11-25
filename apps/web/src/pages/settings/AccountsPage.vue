@@ -3,14 +3,19 @@ import { computed, onMounted, reactive, ref } from 'vue';
 import {
   ACCOUNT_KINDS,
   ACCOUNT_KIND_LABELS,
+  CUTOFF_MONTH_END,
   ISSUERS,
+  defaultCutoffDay,
   issuerName,
+  usagePeriodText,
   type AccountInfo,
   type AccountKind,
+  type LabelLinkResult,
 } from '@budget/shared';
 import { api } from '../../api/client.ts';
 import { errorMessage } from '../../auth/messages.ts';
 import BottomSheet from '../../components/BottomSheet.vue';
+import UnlinkedLabels from '../../components/UnlinkedLabels.vue';
 import { useAuthStore } from '../../stores/auth.ts';
 import { useLedgerStore } from '../../stores/ledger.ts';
 
@@ -20,6 +25,7 @@ const showArchived = ref(false);
 const error = ref('');
 const busy = ref(false);
 const editing = ref<AccountInfo | 'new' | null>(null);
+const linkedNotice = ref('');
 
 const form = reactive({
   kind: 'card' as AccountKind,
@@ -27,6 +33,7 @@ const form = reactive({
   issuer: '' as string,
   last4: '',
   billingDay: '' as string | number,
+  cutoffDay: '' as string | number,
   ownerUserId: 0,
   primaryUserId: '' as string | number,
 });
@@ -59,18 +66,43 @@ function open(target: AccountInfo | 'new'): void {
     issuer: a?.issuer ?? '',
     last4: a?.last4 ?? '',
     billingDay: a?.billingDay ?? '',
+    cutoffDay: a?.cutoffDay ?? '',
     ownerUserId: a?.ownerUserId ?? auth.user?.id ?? 0,
     primaryUserId: a?.primaryUserId ?? '',
   });
+}
+
+/** A new payment day starts from the usual cutoff; it can be changed afterwards. */
+function billingDayChanged(): void {
+  form.cutoffDay = form.billingDay === '' ? '' : defaultCutoffDay(Number(form.billingDay));
+}
+
+const period = computed(() =>
+  form.billingDay !== '' && form.cutoffDay !== ''
+    ? usagePeriodText(Number(form.billingDay), Number(form.cutoffDay))
+    : '',
+);
+
+const hasDigits = computed(() => form.kind === 'card' || form.kind === 'bank');
+
+async function labelsLinked(result: LabelLinkResult): Promise<void> {
+  await ledger.load(true);
+  linkedNotice.value =
+    `${result.created ? `카드·계좌 ${result.created}개를 만들고 ` : ''}거래 ${result.linked.toLocaleString()}건에 연결했습니다.` +
+    ' 카드는 「수정」에서 결제일을 넣으면 내역에 결제월이 보입니다.';
 }
 
 async function save(): Promise<void> {
   const body = {
     kind: form.kind,
     name: form.name,
-    issuer: form.issuer || null,
-    last4: form.last4 || null,
+    issuer: (hasDigits.value && form.issuer) || null,
+    last4: (hasDigits.value && form.last4) || null,
     billingDay: form.kind === 'card' && form.billingDay !== '' ? Number(form.billingDay) : null,
+    cutoffDay:
+      form.kind === 'card' && form.billingDay !== '' && form.cutoffDay !== ''
+        ? Number(form.cutoffDay)
+        : null,
     primaryUserId: form.primaryUserId === '' ? null : Number(form.primaryUserId),
     ...(auth.isAdmin ? { ownerUserId: form.ownerUserId } : {}),
   };
@@ -107,6 +139,9 @@ const move = (a: AccountInfo, delta: number) =>
       있습니다.
     </p>
     <p v-if="error" class="error-text" role="alert">{{ error }}</p>
+    <p v-if="linkedNotice" class="notice" role="status">{{ linkedNotice }}</p>
+
+    <UnlinkedLabels @linked="labelsLinked" />
 
     <div class="card">
       <ul class="row-list" data-testid="account-list">
@@ -115,12 +150,21 @@ const move = (a: AccountInfo, delta: number) =>
             <strong>{{ a.name }}</strong>
             <span class="badge">{{ ACCOUNT_KIND_LABELS[a.kind] }}</span>
             <span v-if="a.archived" class="badge">보관됨</span>
+            <span
+              v-if="a.kind === 'card' && !a.billingDay && !a.archived"
+              class="badge"
+              title="신용카드는 결제일을 넣으면 내역에서 결제월을 볼 수 있습니다 (체크카드는 비워 두세요)"
+              >결제일 미입력</span
+            >
             <div class="row-sub">
               {{
                 [
                   issuerName(a.issuer),
                   a.last4 ? `····${a.last4}` : null,
-                  a.billingDay ? `결제일 ${a.billingDay}일` : null,
+                  a.billingDay
+                    ? `결제일 ${a.billingDay}일` +
+                      (a.cutoffDay ? ` (${usagePeriodText(a.billingDay, a.cutoffDay)} 사용분)` : '')
+                    : null,
                 ]
                   .filter(Boolean)
                   .join(' · ') || '—'
@@ -203,7 +247,7 @@ const move = (a: AccountInfo, delta: number) =>
             data-testid="account-name"
           />
         </label>
-        <template v-if="form.kind !== 'cash'">
+        <template v-if="hasDigits">
           <label class="field">
             <span>{{ form.kind === 'card' ? '카드사' : '은행' }}</span>
             <select v-model="form.issuer">
@@ -222,13 +266,26 @@ const move = (a: AccountInfo, delta: number) =>
             />
           </label>
         </template>
-        <label v-if="form.kind === 'card'" class="field">
-          <span>결제일</span>
-          <select v-model="form.billingDay">
-            <option value="">선택 안 함</option>
-            <option v-for="d in 31" :key="d" :value="d">{{ d }}일</option>
-          </select>
-        </label>
+        <template v-if="form.kind === 'card'">
+          <label class="field">
+            <span>결제일</span>
+            <select v-model="form.billingDay" data-testid="billing-day" @change="billingDayChanged">
+              <option value="">선택 안 함</option>
+              <option v-for="d in 31" :key="d" :value="d">{{ d }}일</option>
+            </select>
+          </label>
+          <label v-if="form.billingDay !== ''" class="field">
+            <span>이용기간 마감일</span>
+            <select v-model="form.cutoffDay" data-testid="cutoff-day">
+              <option v-for="d in 30" :key="d" :value="d">{{ d }}일</option>
+              <option :value="CUTOFF_MONTH_END">말일</option>
+            </select>
+            <small class="muted">
+              {{ period }} 사용분이 {{ form.billingDay }}일에 결제됩니다. 카드사 앱의 「이용기간」과
+              다르면 마감일을 고치세요.
+            </small>
+          </label>
+        </template>
         <label v-if="auth.isAdmin" class="field">
           <span>명의자</span>
           <select v-model="form.ownerUserId">

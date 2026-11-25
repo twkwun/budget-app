@@ -6,7 +6,8 @@
 export const USER_ROLES = ['admin', 'member'] as const;
 export type UserRole = (typeof USER_ROLES)[number];
 
-export const ACCOUNT_KINDS = ['card', 'bank', 'cash', 'other'] as const;
+/** `pay` is a simple-payment wallet (카카오페이, 네이버페이 …). */
+export const ACCOUNT_KINDS = ['card', 'bank', 'pay', 'cash', 'other'] as const;
 export type AccountKind = (typeof ACCOUNT_KINDS)[number];
 
 /** Transfers (card bill payments, moves between own accounts) are excluded from spending totals. */

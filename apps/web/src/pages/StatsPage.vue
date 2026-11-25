@@ -6,16 +6,21 @@ import {
   currentYearMonth,
   formatKrw,
   parseYearMonth,
+  type BudgetMonthsReport,
+  type ListBasis,
   type RangeStats,
   type YearMonth,
   type YearStats,
 } from '@budget/shared';
 import { api } from '../api/client.ts';
 import { errorMessage } from '../auth/messages.ts';
+import { budgetLineSeries, excessItemStyle, splitOver } from '../charts/budget-marks.ts';
 import type { ChartTheme } from '../charts/theme.ts';
 import AppIcon from '../components/AppIcon.vue';
+import BasisSwitch from '../components/BasisSwitch.vue';
 import EChart from '../components/EChart.vue';
 import ScopeSwitch from '../components/ScopeSwitch.vue';
+import { basisFromQuery } from '../ledger/basis.ts';
 import { changeRatio, compactKrw, monthLabel } from '../ledger/format.ts';
 import { useLedgerStore } from '../stores/ledger.ts';
 
@@ -51,19 +56,40 @@ const scope = computed<'all' | number>({
     void router.replace({ query: { ...route.query, owner: o === 'all' ? undefined : String(o) } }),
 });
 
+const basis = computed<ListBasis>({
+  get: () => basisFromQuery(route.query),
+  set: (b) => void router.replace({ query: { ...route.query, basis: b } }),
+});
+
 const stats = ref<RangeStats | YearStats | null>(null);
+/** Overall budget per month of the shown period, from 예산 › 월별 비교. */
+const budgetReport = ref<BudgetMonthsReport | null>(null);
 const loading = ref(true);
 const error = ref('');
+
+/** Budgets are optional here: a failure only hides the budget marks. */
+async function loadBudgets(): Promise<void> {
+  const last = mode.value === 'year' ? `${year.value}-12` : thisMonth;
+  const to = last > thisMonth ? thisMonth : last;
+  try {
+    budgetReport.value = await api.get<BudgetMonthsReport>(`/budgets/months?to=${to}&count=12`);
+  } catch {
+    budgetReport.value = null;
+  }
+}
 
 async function load(): Promise<void> {
   loading.value = true;
   error.value = '';
+  void loadBudgets();
   try {
     stats.value =
       mode.value === 'year'
-        ? await api.get<YearStats>(`/stats/year?year=${year.value}&owner=${scope.value}`)
+        ? await api.get<YearStats>(
+            `/stats/year?year=${year.value}&owner=${scope.value}&basis=${basis.value}`,
+          )
         : await api.get<RangeStats>(
-            `/stats/range?from=${addMonths(thisMonth, -11)}&to=${thisMonth}&owner=${scope.value}`,
+            `/stats/range?from=${addMonths(thisMonth, -11)}&to=${thisMonth}&owner=${scope.value}&basis=${basis.value}`,
           );
   } catch (e) {
     error.value = errorMessage(e);
@@ -71,7 +97,7 @@ async function load(): Promise<void> {
     loading.value = false;
   }
 }
-watch([mode, year, scope], () => void load());
+watch([mode, year, scope, basis], () => void load());
 onMounted(() => {
   void load();
   void ledger.load().catch(() => {});
@@ -103,6 +129,7 @@ function listLink(month: YearMonth, extra: Record<string, string> = {}): RouteLo
     path: '/transactions',
     query: {
       month,
+      basis: basis.value,
       ...(scope.value === 'all' ? {} : { ownerId: String(scope.value) }),
       ...extra,
     },
@@ -125,11 +152,42 @@ function compare(current: number, previous: number): string {
 }
 
 // ---- Monthly 지출·수입 ----
+/**
+ * The overall budget is counted on the whole family's spending by the day it
+ * happened, so it is only set against the bars in that view.
+ */
+const budgetComparable = computed(() => scope.value === 'all' && basis.value === 'date');
+const hasOverallBudget = computed(() => !!budgetReport.value?.overall);
+/** Overall budget per shown month (null: none that month, or not comparable). */
+const monthBudgets = computed<(number | null)[]>(() => {
+  const months = stats.value?.months ?? [];
+  const cells = budgetReport.value?.overall?.cells ?? [];
+  if (!budgetComparable.value) return months.map(() => null);
+  const byMonth = new Map(cells.map((c) => [c.month, c.budget]));
+  return months.map((m) => byMonth.get(m.month) ?? null);
+});
+const budgetedMonths = computed(() => monthBudgets.value.filter((b) => b != null).length);
+const overMonths = computed(
+  () =>
+    stats.value?.months.filter((m, i) => {
+      const b = monthBudgets.value[i];
+      return b != null && m.expense > b;
+    }).length ?? 0,
+);
+
+const BAR_MAX_WIDTH = 12;
+const BAR_GAP = '15%';
+
 const monthly = computed(() => {
   const s = stats.value;
   if (!s) return null;
   const months = s.months;
   const previous = yearStats.value?.previous.months ?? null;
+  const budgets = monthBudgets.value;
+  const { within, excess } = splitOver(
+    months.map((m) => m.expense),
+    budgets,
+  );
   return (theme: ChartTheme) => ({
     animationDuration: 300,
     grid: { left: 8, right: 8, top: 16, bottom: 4, containLabel: true },
@@ -140,11 +198,16 @@ const monthly = computed(() => {
         const i = params[0]?.dataIndex ?? 0;
         const m = months[i];
         if (!m) return '';
-        const lines = [
-          monthLabel(m.month),
-          `지출 ${formatKrw(m.expense)}`,
-          `수입 ${formatKrw(m.income)}`,
-        ];
+        const lines = [monthLabel(m.month), `지출 ${formatKrw(m.expense)}`];
+        const b = budgets[i];
+        if (b != null) {
+          lines.push(
+            m.expense > b
+              ? `예산 ${formatKrw(b)} · <b>${formatKrw(m.expense - b)} 초과</b>`
+              : `예산 ${formatKrw(b)} · ${formatKrw(b - m.expense)} 남음`,
+          );
+        }
+        lines.push(`수입 ${formatKrw(m.income)}`);
         if (previous?.[i]) lines.push(`작년 지출 ${formatKrw(previous[i].expense)}`);
         return lines.join('<br/>');
       },
@@ -166,15 +229,28 @@ const monthly = computed(() => {
       {
         type: 'bar',
         name: '지출',
-        barMaxWidth: 12,
-        barGap: '15%',
-        itemStyle: { color: theme.series[0], borderRadius: [4, 4, 0, 0] },
-        data: months.map((m) => m.expense),
+        stack: 'expense',
+        barMaxWidth: BAR_MAX_WIDTH,
+        barGap: BAR_GAP,
+        itemStyle: { color: theme.series[0] },
+        data: months.map((m, i) => ({
+          value: within[i] ?? m.expense,
+          itemStyle: { borderRadius: within[i] === null ? [4, 4, 0, 0] : 0 },
+        })),
+      },
+      {
+        // Spending past the budget, hatched like the budget bars.
+        type: 'bar',
+        name: '예산 초과',
+        stack: 'expense',
+        barMaxWidth: BAR_MAX_WIDTH,
+        itemStyle: excessItemStyle(theme),
+        data: excess,
       },
       {
         type: 'bar',
         name: '수입',
-        barMaxWidth: 12,
+        barMaxWidth: BAR_MAX_WIDTH,
         itemStyle: { color: theme.series[2], borderRadius: [4, 4, 0, 0] },
         data: months.map((m) => m.income),
       },
@@ -191,14 +267,17 @@ const monthly = computed(() => {
             },
           ]
         : []),
+      // The budget line across the expense bar of each month that went over.
+      budgetLineSeries(theme, within, { count: 2, barGap: BAR_GAP, barMaxWidth: BAR_MAX_WIDTH }),
     ],
   });
 });
 
+/** Series: 0 지출 (within budget), 1 예산 초과, 2 수입; the rest are lines and marks. */
 function openMonth(item: { dataIndex: number; seriesIndex: number }): void {
   const m = stats.value?.months[item.dataIndex];
-  if (!m || item.seriesIndex > 1) return;
-  void router.push(listLink(m.month, { type: item.seriesIndex === 1 ? 'income' : 'expense' }));
+  if (!m || item.seriesIndex > 2) return;
+  void router.push(listLink(m.month, { type: item.seriesIndex === 2 ? 'income' : 'expense' }));
 }
 
 // ---- Category trend ----
@@ -393,7 +472,12 @@ const periodLabel = computed(() =>
         v-model="scope"
         :members="ledger.activeMembers"
       />
-      <p class="muted small">{{ periodLabel }} · 이체와 취소된 거래는 빠집니다.</p>
+      <BasisSwitch v-model="basis" />
+      <p class="muted small">
+        {{ periodLabel }} · 이체와 취소된 거래는 빠집니다.<template v-if="basis === 'billing'">
+          카드는 결제일에 돈이 나가는 달로 셉니다.</template
+        >
+      </p>
     </header>
 
     <p v-if="error" class="error-text" role="alert">
@@ -437,12 +521,23 @@ const periodLabel = computed(() =>
             <li><span class="swatch" style="background: var(--series-1)" />지출</li>
             <li><span class="swatch" style="background: var(--series-3)" />수입</li>
             <li v-if="yearStats"><span class="swatch dashed" />{{ year - 1 }}년 지출</li>
+            <li v-if="overMonths"><span class="swatch hatched" />예산 초과 (흰 선 = 예산)</li>
           </ul>
+          <p v-if="overMonths" class="muted small" data-testid="monthly-over-note">
+            전체 예산이 있던 {{ budgetedMonths }}달 중 {{ overMonths }}달 넘었습니다.
+          </p>
+          <p
+            v-else-if="hasOverallBudget && !budgetComparable"
+            class="muted small"
+            data-testid="monthly-budget-hidden"
+          >
+            예산 대비 표시는 「전체」·「쓴 날 기준」으로 볼 때만 나옵니다.
+          </p>
           <EChart
             v-if="monthly"
             :build="monthly"
             :height="200"
-            label="월별 지출과 수입 막대 그래프. 막대를 누르면 그 달 내역이 열립니다. 아래 표와 같은 내용입니다."
+            label="월별 지출과 수입 막대 그래프. 전체 예산을 넘은 달은 지출 막대에 예산 자리 선과 넘은 부분 빗금이 있습니다. 막대를 누르면 그 달 내역이 열립니다. 아래 표와 같은 내용입니다."
             data-testid="monthly-chart"
             @select="openMonth"
           />
@@ -455,6 +550,7 @@ const periodLabel = computed(() =>
                   <th scope="col" class="num">지출</th>
                   <th scope="col" class="num">수입</th>
                   <th v-if="yearStats" scope="col" class="num">작년 지출</th>
+                  <th v-if="overMonths" scope="col" class="num">예산 대비</th>
                 </tr>
               </thead>
               <tbody>
@@ -469,6 +565,15 @@ const periodLabel = computed(() =>
                   <td v-if="yearStats" class="num tabular muted">
                     {{ formatKrw(yearStats.previous.months[i]?.expense ?? 0) }}
                   </td>
+                  <td v-if="overMonths" class="num tabular">
+                    <template v-if="monthBudgets[i] == null">—</template>
+                    <span v-else-if="m.expense > (monthBudgets[i] ?? 0)" class="over-text">
+                      {{ formatKrw(m.expense - (monthBudgets[i] ?? 0)) }} 초과
+                    </span>
+                    <span v-else class="muted">
+                      {{ formatKrw((monthBudgets[i] ?? 0) - m.expense) }} 남음
+                    </span>
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -476,7 +581,16 @@ const periodLabel = computed(() =>
         </section>
 
         <section class="card wide" aria-labelledby="category-title">
-          <h2 id="category-title">분류별 지출 추이</h2>
+          <div class="card-head">
+            <h2 id="category-title">분류별 지출 추이</h2>
+            <RouterLink
+              :to="{ path: '/budgets', query: { view: 'months' } }"
+              class="link-button"
+              data-testid="to-budget-months"
+            >
+              예산 대비 보기
+            </RouterLink>
+          </div>
           <p v-if="categoryRows.length === 0" class="muted small">이 기간에는 지출이 없습니다.</p>
           <template v-else>
             <EChart
@@ -727,6 +841,12 @@ const periodLabel = computed(() =>
 .grid h2 {
   margin: 0;
 }
+.card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
 .empty {
   display: grid;
   gap: 8px;
@@ -761,6 +881,18 @@ const periodLabel = computed(() =>
 }
 .legend-inline .swatch {
   margin-right: 0;
+}
+.swatch.hatched {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--error) 0 3px,
+    color-mix(in srgb, var(--error) 60%, var(--surface)) 3px 6px
+  );
+  box-shadow: inset 0 2px 0 var(--text);
+}
+.over-text {
+  color: var(--error);
+  font-weight: 700;
 }
 .swatch.dashed {
   height: 0;

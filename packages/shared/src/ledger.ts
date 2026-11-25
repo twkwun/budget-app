@@ -35,6 +35,7 @@ export const TRANSACTION_STATUS_LABELS: Record<TransactionStatus, string> = {
 export const ACCOUNT_KIND_LABELS: Record<AccountKind, string> = {
   card: '카드',
   bank: '계좌',
+  pay: '간편결제',
   cash: '현금',
   other: '기타',
 };
@@ -69,6 +70,8 @@ export interface AccountInfo {
   issuer: string | null;
   last4: string | null;
   billingDay: number | null;
+  /** Last day of the usage period (이용기간 마감일); 31 = 말일. Cards with a payment day only. */
+  cutoffDay: number | null;
   sortOrder: number;
   archived: boolean;
   ownerUserId: number;
@@ -111,6 +114,9 @@ export interface TransactionInfo {
   topCategoryId: number | null;
   accountId: number | null;
   accountName: string | null;
+  accountKind: AccountKind | null;
+  /** Month the card bill pays this (결제월); null unless the card has a payment day. */
+  billingMonth: YearMonth | null;
   ownerUserId: number;
   ownerName: string;
   status: TransactionStatus;
@@ -153,6 +159,8 @@ export interface CategoryShare {
 
 export interface MonthSummary {
   month: YearMonth;
+  /** `billing`: card spending counted in its 결제월 (daily on the payment day). */
+  basis: ListBasis;
   /** `all` for the family, or a member id. */
   owner: 'all' | number;
   expense: number;
@@ -172,4 +180,54 @@ export interface EntryDefaults {
   accountId: number | null;
   hasOwnAccount: boolean;
   recentCategoryIds: { expense: number[]; income: number[] };
+}
+
+/** 내역 month basis: by the day it happened, or by when the money leaves (카드는 결제월). */
+export const LIST_BASES = ['date', 'billing'] as const;
+export type ListBasis = (typeof LIST_BASES)[number];
+
+/** Most transactions one bulk edit may change. */
+export const BULK_MAX = 2000;
+
+/**
+ * Bulk edit (`POST /transactions/bulk`). Fields left out stay as they are.
+ * A category also sets each transaction's type to the category's kind;
+ * type `transfer` clears the category.
+ */
+export interface BulkTransactionUpdate {
+  ids: number[];
+  categoryId?: number | null;
+  accountId?: number | null;
+  type?: TransactionType;
+  status?: EditableStatus;
+}
+
+export interface BulkTransactionResult {
+  updated: number;
+}
+
+/** 결제수단 labels from imported files whose transactions have no account yet. */
+export interface UnlinkedLabelInfo {
+  label: string;
+  /** Transactions without an account that carry this label. */
+  rows: number;
+  suggestedKind: AccountKind;
+  suggestedIssuer: string | null;
+  last4: string | null;
+  /** An existing account that looks like the same one. */
+  suggestedAccountId: number | null;
+}
+
+/** Link a label to an existing account, or create one (`create`). */
+export interface LabelLinkRequest {
+  items: {
+    label: string;
+    accountId?: number;
+    create?: { kind: AccountKind; name: string; issuer: string | null; last4: string | null };
+  }[];
+}
+
+export interface LabelLinkResult {
+  created: number;
+  linked: number;
 }

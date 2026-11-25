@@ -7,15 +7,18 @@ import {
   isYearMonth,
   type CategoryShare,
   type HomeSummary,
+  type ListBasis,
   type YearMonth,
 } from '@budget/shared';
 import { api } from '../api/client.ts';
 import { errorMessage } from '../auth/messages.ts';
 import type { ChartTheme } from '../charts/theme.ts';
+import BasisSwitch from '../components/BasisSwitch.vue';
 import BudgetMeter from '../components/BudgetMeter.vue';
 import EChart from '../components/EChart.vue';
 import MonthNav from '../components/MonthNav.vue';
 import ScopeSwitch from '../components/ScopeSwitch.vue';
+import { basisFromQuery } from '../ledger/basis.ts';
 import { changeRatio, compactKrw, dayLabel, monthLabel } from '../ledger/format.ts';
 import { useHealthStore } from '../stores/health.ts';
 import { useLedgerStore } from '../stores/ledger.ts';
@@ -41,6 +44,11 @@ const scope = computed<'all' | number>({
     void router.replace({ query: { ...route.query, owner: o === 'all' ? undefined : String(o) } }),
 });
 
+const basis = computed<ListBasis>({
+  get: () => basisFromQuery(route.query),
+  set: (b) => void router.replace({ query: { ...route.query, basis: b } }),
+});
+
 const summary = ref<HomeSummary | null>(null);
 const loading = ref(true);
 const error = ref('');
@@ -50,7 +58,7 @@ async function load(): Promise<void> {
   error.value = '';
   try {
     summary.value = await api.get<HomeSummary>(
-      `/summary?month=${month.value}&owner=${scope.value}`,
+      `/summary?month=${month.value}&owner=${scope.value}&basis=${basis.value}`,
     );
   } catch (e) {
     error.value = errorMessage(e);
@@ -59,7 +67,7 @@ async function load(): Promise<void> {
   }
 }
 
-watch([month, scope], () => void load());
+watch([month, scope, basis], () => void load());
 onMounted(() => {
   void load();
   void ledger.load().catch(() => {});
@@ -80,6 +88,7 @@ const slices = computed(() => {
         path: '/transactions',
         query: {
           month: month.value,
+          basis: basis.value,
           type: 'expense',
           category: s.categoryId ?? 'none',
           ...(scope.value === 'all' ? {} : { ownerId: scope.value }),
@@ -202,6 +211,7 @@ const listLink = (extra: Record<string, string>) => ({
   path: '/transactions',
   query: {
     month: month.value,
+    basis: basis.value,
     ...(scope.value === 'all' ? {} : { ownerId: String(scope.value) }),
     ...extra,
   },
@@ -217,6 +227,11 @@ const listLink = (extra: Record<string, string>) => ({
         v-model="scope"
         :members="ledger.activeMembers"
       />
+      <BasisSwitch v-model="basis" />
+      <p v-if="basis === 'billing'" class="muted small basis-note" data-testid="basis-note">
+        카드는 결제일에 돈이 나가는 달로 셉니다({{ monthLabel(month) }} 결제분). 일별 지출에서
+        카드값은 결제일에 모여 보이고, 예산은 그대로 쓴 날 기준입니다.
+      </p>
     </header>
 
     <p v-if="error" class="error-text" role="alert">
@@ -234,7 +249,9 @@ const listLink = (extra: Record<string, string>) => ({
 
     <div class="kpis">
       <RouterLink :to="listLink({ type: 'expense' })" class="card kpi" data-testid="kpi-expense">
-        <span class="muted">{{ monthLabel(month) }} 지출</span>
+        <span class="muted"
+          >{{ monthLabel(month) }} {{ basis === 'billing' ? '나가는 돈' : '지출' }}</span
+        >
         <strong class="value tabular">{{ summary ? formatKrw(summary.expense) : '—' }}</strong>
         <span v-if="summary" class="delta muted">{{
           change(summary.expense, summary.previous.expense)
@@ -396,7 +413,7 @@ const listLink = (extra: Record<string, string>) => ({
       </section>
 
       <section class="card" aria-labelledby="by-day">
-        <h2 id="by-day">일별 지출</h2>
+        <h2 id="by-day">{{ basis === 'billing' ? '일별 나가는 돈' : '일별 지출' }}</h2>
         <EChart
           :build="daily"
           :height="170"
@@ -449,6 +466,9 @@ const listLink = (extra: Record<string, string>) => ({
 .head {
   display: grid;
   gap: 10px;
+}
+.basis-note {
+  margin: 0;
 }
 .kpis {
   display: grid;

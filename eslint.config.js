@@ -34,6 +34,7 @@ export default tseslint.config(
       'apps/server/**/*.ts',
       'packages/**/*.ts',
       'e2e/**/*.ts',
+      'apps/web/scripts/**/*.ts',
       '**/*.config.{ts,js}',
       '**/test/**/*.ts',
     ],

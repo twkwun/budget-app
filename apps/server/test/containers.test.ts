@@ -1,7 +1,9 @@
 /** Container readers against generated, invented fixtures. */
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { readWorkbook } from '../src/importer/read.ts';
-import { parseFileInWorker } from '../src/importer/parse-file.ts';
+import { isParseResult, parseFileInWorker } from '../src/importer/parse-file.ts';
 import { ImportFileError } from '../src/importer/types.ts';
 import {
   encryptXlsx,
@@ -144,6 +146,42 @@ describe('worker isolation', () => {
       parseFileInWorker(encryptXlsx(makeXlsx([{ name: 'a', rows: ROWS }]), 'pw', 10)),
     ).rejects.toMatchObject({ code: 'password_required' });
   });
+
+  it('ignores watch-mode dependency messages from the worker', () => {
+    expect(isParseResult({ 'watch:import': ['file:///x.ts'] })).toBe(false);
+    expect(isParseResult({ 'watch:require': [null] })).toBe(false);
+    expect(isParseResult(null)).toBe(false);
+    expect(isParseResult({ ok: true, workbook: { sheets: [] } })).toBe(true);
+    expect(isParseResult({ ok: false, code: 'corrupt_file', message: 'x' })).toBe(true);
+  });
+
+  it('parses in a worker under node --watch (pnpm dev)', async () => {
+    const script = fileURLToPath(new URL('./support/watch-parse.ts', import.meta.url));
+    const child = spawn(
+      process.execPath,
+      ['--conditions=@budget/source', '--watch', '--no-warnings', script],
+      { stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    try {
+      const line = await new Promise<string>((resolve, reject) => {
+        let out = '';
+        const timer = setTimeout(() => reject(new Error(`no result: ${out}`)), 15_000);
+        child.stdout.on('data', (chunk: Buffer) => {
+          out += chunk.toString();
+          const found = out.split('\n').find((l) => l.startsWith('{'));
+          if (found) {
+            clearTimeout(timer);
+            resolve(found);
+          }
+        });
+        child.once('error', reject);
+      });
+      expect(JSON.parse(line)).toEqual({ ok: true, sheets: ['a'] });
+    } finally {
+      // --watch keeps waiting for file changes after the script ends.
+      child.kill();
+    }
+  }, 20_000);
 
   it('times out instead of blocking', async () => {
     // A tiny timeout stands in for a pathological file.

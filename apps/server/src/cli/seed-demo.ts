@@ -235,6 +235,7 @@ export async function seedDemo(db: AppDatabase, now = Date.now(), hasher = new P
       issuer: 'shinhan',
       last4: '0001',
       billingDay: 14,
+      cutoffDay: 31,
     },
     0,
   );
@@ -246,7 +247,8 @@ export async function seedDemo(db: AppDatabase, now = Date.now(), hasher = new P
       name: '삼성 가족카드',
       issuer: 'samsung',
       last4: '0003',
-      billingDay: 14,
+      billingDay: 25,
+      cutoffDay: 11,
     },
     1,
   );
@@ -425,10 +427,23 @@ export async function seedDemo(db: AppDatabase, now = Date.now(), hasher = new P
     isPrivate: true,
   });
 
-  // Budgets: the overall budget was set three months ago and lowered this
-  // month; 식비 and 쇼핑 have their own.
+  // Budgets: a year of history for 월별 비교. The overall budget was set a
+  // year ago, raised three months ago and lowered this month; 식비, 쇼핑 and
+  // 생활 have their own.
   db.insert(s.budgets)
     .values([
+      {
+        month: addMonths(thisMonth, -11),
+        categoryId: null,
+        amount: 2_700_000,
+        updatedByUserId: sujin.id,
+      },
+      {
+        month: addMonths(thisMonth, -11),
+        categoryId: cat('expense.food'),
+        amount: 950_000,
+        updatedByUserId: sujin.id,
+      },
       {
         month: addMonths(thisMonth, -3),
         categoryId: null,

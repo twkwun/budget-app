@@ -3,6 +3,21 @@ import { ImportFileError, type ImportFileErrorCode, type Workbook } from './type
 
 export const PARSE_TIMEOUT_MS = 20_000;
 
+export type ParseResult =
+  { ok: true; workbook: Workbook } | { ok: false; code: ImportFileErrorCode; message: string };
+
+/**
+ * True for the worker's own result message. Under `node --watch` (pnpm dev)
+ * Node also posts `{ "watch:import": [...] }` / `{ "watch:require": [...] }`
+ * from every worker to report its dependencies; those must be ignored rather
+ * than taken as a failed parse.
+ */
+export function isParseResult(msg: unknown): msg is ParseResult {
+  return (
+    typeof msg === 'object' && msg !== null && typeof (msg as { ok?: unknown }).ok === 'boolean'
+  );
+}
+
 /**
  * Parse an uploaded file in a worker thread with a memory cap and a timeout,
  * so a hostile or pathological file can never block the server or exhaust
@@ -23,19 +38,15 @@ export function parseFileInWorker(
       void worker.terminate();
       reject(new ImportFileError('parse_timeout', 'File took too long to read'));
     }, timeoutMs);
-    worker.once(
-      'message',
-      (
-        msg:
-          | { ok: true; workbook: Workbook }
-          | { ok: false; code: ImportFileErrorCode; message: string },
-      ) => {
-        clearTimeout(timer);
-        void worker.terminate();
-        if (msg.ok) resolve(msg.workbook);
-        else reject(new ImportFileError(msg.code, msg.message));
-      },
-    );
+    const onMessage = (msg: unknown) => {
+      if (!isParseResult(msg)) return;
+      worker.off('message', onMessage);
+      clearTimeout(timer);
+      void worker.terminate();
+      if (msg.ok) resolve(msg.workbook);
+      else reject(new ImportFileError(msg.code, msg.message));
+    };
+    worker.on('message', onMessage);
     worker.once('error', (error) => {
       clearTimeout(timer);
       reject(

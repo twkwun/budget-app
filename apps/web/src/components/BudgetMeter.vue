@@ -4,7 +4,9 @@ import { formatKrw, type BudgetPace, type BudgetProgress } from '@budget/shared'
 
 /**
  * One budget's progress. Over-budget is said in words and marked with a
- * hatched bar and an icon, never by colour alone.
+ * hatched bar and an icon, never by colour alone. When over, the bar is
+ * rescaled to the amount spent: a line marks the budget, the solid part up
+ * to it is what the budget covered, and the hatched part past it is the excess.
  */
 const props = defineProps<{
   budget: BudgetProgress & { pace: BudgetPace | null };
@@ -13,6 +15,16 @@ const props = defineProps<{
 }>();
 
 const fill = computed(() => Math.min(100, Math.max(0, props.budget.percent)));
+/**
+ * Where the budget line sits (0–100) once spending passes it; null when not
+ * over. Capped so even a small excess shows a visible hatched sliver.
+ */
+const MAX_PLAN_AT = 96;
+const planAt = computed(() => {
+  const { over, amount, spent } = props.budget;
+  if (!over || spent <= 0) return null;
+  return Math.round(Math.min(MAX_PLAN_AT, Math.max(0, (amount / spent) * 100)) * 10) / 10;
+});
 const paceText = computed(() => {
   const pace = props.budget.pace;
   if (!pace || props.budget.over) return '';
@@ -37,12 +49,24 @@ const paceText = computed(() => {
         <span class="muted"> / {{ formatKrw(budget.amount) }}</span>
       </span>
     </div>
-    <div class="track" aria-hidden="true">
-      <div class="fill" :style="{ width: `${fill}%` }" />
+    <div class="bar" aria-hidden="true">
+      <div class="track">
+        <template v-if="planAt !== null">
+          <div class="fill within" :style="{ width: `${planAt}%` }" />
+          <div class="fill excess" />
+        </template>
+        <div v-else class="fill" :style="{ width: `${fill}%` }" />
+      </div>
       <div
         v-if="budget.pace && !budget.over"
         class="mark"
         :style="{ left: `${Math.round(budget.pace.elapsed * 1000) / 10}%` }"
+      />
+      <div
+        v-if="planAt !== null"
+        class="plan"
+        data-testid="budget-plan-line"
+        :style="{ left: `${planAt}%` }"
       />
     </div>
     <div class="foot">
@@ -85,8 +109,11 @@ const paceText = computed(() => {
   font-size: 0.9rem;
   white-space: nowrap;
 }
-.track {
+.bar {
   position: relative;
+}
+.track {
+  display: flex;
   height: 10px;
   border-radius: 999px;
   background: var(--surface-hover);
@@ -105,11 +132,28 @@ const paceText = computed(() => {
   background: var(--warn);
 }
 .over .fill {
+  border-radius: 0;
+}
+.over .within {
+  background: color-mix(in srgb, var(--error) 45%, var(--surface-hover));
+}
+.over .excess {
+  flex: 1;
   background: repeating-linear-gradient(
     -45deg,
     var(--error) 0 6px,
     color-mix(in srgb, var(--error) 60%, var(--surface)) 6px 12px
   );
+}
+.plan {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 3px;
+  margin-left: -1.5px;
+  border-radius: 2px;
+  background: var(--text);
+  box-shadow: 0 0 0 1.5px var(--surface);
 }
 .mark {
   position: absolute;

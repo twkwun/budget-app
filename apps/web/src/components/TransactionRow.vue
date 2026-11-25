@@ -1,19 +1,32 @@
 <script setup lang="ts">
-import { TRANSACTION_STATUS_LABELS, type TransactionInfo } from '@budget/shared';
+import { TRANSACTION_STATUS_LABELS, monthLabel, type TransactionInfo } from '@budget/shared';
 import { signedAmount, timeLabel } from '../ledger/format.ts';
+import AccountTag from './AccountTag.vue';
 
-defineProps<{ tx: TransactionInfo; showOwner: boolean }>();
-defineEmits<{ open: [] }>();
+defineProps<{
+  tx: TransactionInfo;
+  showOwner: boolean;
+  /** Selection mode: the row toggles a checkbox instead of opening the editor. */
+  selectable?: boolean;
+  selected?: boolean;
+}>();
+defineEmits<{ open: [event: MouseEvent] }>();
 </script>
 
 <template>
   <button
     type="button"
     class="row"
-    :class="{ cancelled: tx.status === 'cancelled' }"
+    :class="{ cancelled: tx.status === 'cancelled', selected }"
+    :aria-pressed="selectable ? selected : undefined"
     data-testid="tx-row"
-    @click="$emit('open')"
+    @click="$emit('open', $event)"
   >
+    <span v-if="selectable" class="check" :class="{ on: selected }" aria-hidden="true">
+      <svg v-if="selected" viewBox="0 0 16 16" width="12" height="12">
+        <path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2.2" />
+      </svg>
+    </span>
     <span class="main">
       <span class="title">
         {{ tx.merchant || tx.categoryName || (tx.type === 'transfer' ? '이체' : '미분류') }}
@@ -39,8 +52,17 @@ defineEmits<{ open: [] }>();
         }}</span>
         <span v-else>이체</span>
         · {{ timeLabel(tx.occurredAt) }}
-        <template v-if="tx.accountName"> · {{ tx.accountName }}</template>
         <template v-if="showOwner"> · {{ tx.ownerName }}</template>
+      </span>
+      <span v-if="tx.accountName" class="sub pay">
+        <AccountTag :name="tx.accountName" :kind="tx.accountKind" />
+        <span
+          v-if="tx.billingMonth"
+          class="billing"
+          :class="{ later: tx.billingMonth !== tx.occurredDate.slice(0, 7) }"
+          data-testid="billing-month"
+          >{{ monthLabel(tx.billingMonth, tx.occurredDate.slice(0, 7)) }} 결제</span
+        >
       </span>
     </span>
     <span class="right">
@@ -70,6 +92,24 @@ defineEmits<{ open: [] }>();
   cursor: pointer;
   font: inherit;
 }
+.row.selected {
+  background: var(--accent-soft);
+  border-radius: 8px;
+}
+.check {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--border);
+  border-radius: 6px;
+  color: var(--on-accent);
+}
+.check.on {
+  border-color: var(--accent);
+  background: var(--accent);
+}
 .main {
   flex: 1;
   min-width: 0;
@@ -87,6 +127,20 @@ defineEmits<{ open: [] }>();
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.pay {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+.billing {
+  flex: none;
+  font-size: 0.75rem;
+}
+.billing.later {
+  color: var(--accent);
+  font-weight: 600;
 }
 .source {
   display: inline-block;
@@ -114,9 +168,6 @@ defineEmits<{ open: [] }>();
 }
 .amount {
   font-weight: 700;
-}
-.amount.income {
-  color: var(--accent);
 }
 .cancelled .amount,
 .cancelled .title {

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useRoute } from 'vue-router';
-import { NAV_ITEMS } from '../nav.ts';
+import { APP_VERSION } from '../changelog.ts';
+import { HELP_ITEMS, NAV_ITEMS } from '../nav.ts';
 import { useInboxStore } from '../stores/inbox.ts';
 import AppIcon from './AppIcon.vue';
 
@@ -15,6 +16,7 @@ const isActive = (name: string) =>
     <div class="brand">
       <img src="/favicon.svg" alt="" width="28" height="28" />
       <span>가계부</span>
+      <span class="version tabular" data-testid="sidebar-version">v{{ APP_VERSION }}</span>
     </div>
     <ul>
       <li v-for="item in NAV_ITEMS" :key="item.name">
@@ -30,6 +32,19 @@ const isActive = (name: string) =>
         </RouterLink>
       </li>
     </ul>
+    <ul class="help" aria-label="도움말">
+      <li v-for="item in HELP_ITEMS" :key="item.name">
+        <RouterLink
+          :to="item.path"
+          class="link"
+          :class="{ active: isActive(item.name) }"
+          :aria-current="isActive(item.name) ? 'page' : undefined"
+        >
+          <AppIcon :name="item.icon" :size="20" />
+          <span>{{ item.label }}</span>
+        </RouterLink>
+      </li>
+    </ul>
   </nav>
 </template>
 
@@ -39,7 +54,9 @@ const isActive = (name: string) =>
   flex-direction: column;
   gap: 8px;
   width: var(--sidebar-width);
-  height: 100dvh;
+  /* content-box: subtract the vertical padding so the help links stay on screen. */
+  height: calc(100dvh - 32px - var(--safe-top) - var(--safe-bottom));
+  overflow-y: auto;
   position: sticky;
   top: 0;
   padding: calc(16px + var(--safe-top)) 12px calc(16px + var(--safe-bottom))
@@ -62,6 +79,17 @@ ul {
   padding: 0;
   display: grid;
   gap: 2px;
+}
+.version {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.help {
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
 }
 .link {
   display: flex;

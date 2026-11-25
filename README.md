@@ -278,6 +278,13 @@ pnpm db:generate   # 스키마와 마이그레이션이 맞는지 (바뀐 것이
 
 `pnpm e2e`는 빌드된 서버를 임시 데이터 폴더로 띄워 처음 설정·패스키·잠금·초대, 비밀번호 로그인, 빠른 입력, 문자 수집, 파일 가져오기, 예산·통계·CSV 내보내기를 확인합니다. Chromium이 필요합니다. 처음이면 `pnpm exec playwright install chromium`으로 설치합니다. `SCREENSHOT_DIR=/경로 pnpm e2e`로 화면을 저장할 수 있습니다.
 
+### 사용자 설명서와 버전 이력
+
+- 앱 안의 **사용자 설명서**(`/manual`)와 **버전 이력**(`/changelog`)은 [apps/web/src/manual.ts](apps/web/src/manual.ts)와 [apps/web/src/changelog.ts](apps/web/src/changelog.ts)에 적습니다. 사이드바 아래쪽, 휴대폰은 **더보기 → 도움말**에서 엽니다.
+- [docs/user-manual.md](docs/user-manual.md)는 `pnpm manual:md`로 `manual.ts`에서 만듭니다. 직접 고치지 않습니다.
+- 화면 캡처(`apps/web/public/manual/*.jpg`)는 `pnpm build && pnpm manual:shots`로 다시 만듭니다. 임시 폴더에 데모 데이터를 넣고 빌드된 서버를 띄워 설치된 Google Chrome으로 찍습니다(`./data`는 건드리지 않습니다). Chrome이 없으면 `MANUAL_BROWSER=chromium`으로 Playwright의 Chromium을 씁니다.
+- 버전은 `Major.Minor.Patch`이고 `changelog.ts`의 `APP_VERSION`과 모든 `package.json`의 `version`이 같아야 합니다(테스트가 확인).
+
 ### 프로덕션 빌드를 로컬에서 실행
 
 ```bash

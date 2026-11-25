@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue';
 import {
   ACCOUNT_KIND_LABELS,
+  inferAccountKind,
   IMPORT_GROUP_LABELS,
   type AccountInfo,
   type ColumnMap,
@@ -161,16 +162,12 @@ async function mapAccount(label: string, value: string): Promise<void> {
   await run(async () => {
     let accountId: number | null = null;
     if (value === 'new') {
-      const kind = /현금/.test(label)
-        ? 'cash'
-        : /통장|계좌|은행|입출금/.test(label)
-          ? 'bank'
-          : 'card';
+      const kind = inferAccountKind(label) ?? 'card';
       const digits = /(\d{4})(?!.*\d{4})/.exec(label)?.[1] ?? null;
       const created = await api.post<AccountInfo>('/accounts', {
         kind,
         name: label.slice(0, 40) || '가져온 수단',
-        last4: kind === 'cash' ? null : digits,
+        last4: kind === 'card' || kind === 'bank' ? digits : null,
       });
       await ledger.load(true);
       accountId = created.id;

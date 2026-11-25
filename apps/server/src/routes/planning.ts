@@ -3,13 +3,19 @@ import { eq } from 'drizzle-orm';
 import { stat } from 'node:fs/promises';
 import type { FastifyPluginAsync } from 'fastify';
 import {
+  BUDGET_MONTHS_DEFAULT,
+  BUDGET_MONTHS_MAX,
+  BUDGET_MONTHS_MIN,
   MAX_AMOUNT,
+  addMonths,
+  LIST_BASES,
   MERCHANT_MAX_LENGTH,
   currentYearMonth,
   isLocalDate,
   isYearMonth,
   normalizeMerchant,
   type BackupStatus,
+  type BudgetMonthsReport,
   type BudgetOverview,
   type RangeStats,
   type RecurringOverview,
@@ -27,6 +33,7 @@ import { monthSummary } from '../ledger/queries.ts';
 import {
   budgetCategoryOptions,
   budgetHistory,
+  budgetMonths,
   monthBudgets,
   setBudget,
 } from '../planning/budgets.ts';
@@ -38,6 +45,7 @@ const monthSchema = z
   .string()
   .refine(isYearMonth, 'must be YYYY-MM')
   .refine((m) => m >= '2000-01' && m <= '2099-12', 'out of range');
+const basisSchema = z.enum(LIST_BASES).default('date');
 const ownerSchema = z
   .union([z.literal('all'), z.coerce.number().int().positive()])
   .default('all')
@@ -107,6 +115,26 @@ export function planningRoutes(
         categoryOptions: budgetCategoryOptions(ctx.db),
         history: budgetHistory(ctx.db),
       };
+    });
+
+    // 월별 비교: `count` months ending at `to` (never past the current month).
+    app.get('/budgets/months', async (request): Promise<BudgetMonthsReport> => {
+      const { user } = currentAuth(request);
+      const current = currentYearMonth(ctx.now());
+      const q = parse(
+        z.object({
+          to: monthSchema.default(current),
+          count: z.coerce
+            .number()
+            .int()
+            .min(BUDGET_MONTHS_MIN)
+            .max(BUDGET_MONTHS_MAX)
+            .default(BUDGET_MONTHS_DEFAULT),
+        }),
+        request.query,
+      );
+      const to = q.to > current ? current : q.to;
+      return budgetMonths(ctx.db, user.id, addMonths(to, 1 - q.count), to, ctx.now());
     });
 
     app.put('/budgets', async (request, reply) => {
@@ -208,20 +236,24 @@ export function planningRoutes(
     app.get('/stats/range', async (request): Promise<RangeStats> => {
       const { user } = currentAuth(request);
       const q = parse(
-        z.object({ from: monthSchema, to: monthSchema, owner: ownerSchema }),
+        z.object({ from: monthSchema, to: monthSchema, owner: ownerSchema, basis: basisSchema }),
         request.query,
       );
       if (!isValidRange(q.from, q.to)) throw errors.validation('Range must be 1–36 months');
-      return rangeStats(ctx.db, user.id, q.from, q.to, q.owner);
+      return rangeStats(ctx.db, user.id, q.from, q.to, q.owner, q.basis);
     });
 
     app.get('/stats/year', async (request): Promise<YearStats> => {
       const { user } = currentAuth(request);
       const q = parse(
-        z.object({ year: z.coerce.number().int().min(2001).max(2099), owner: ownerSchema }),
+        z.object({
+          year: z.coerce.number().int().min(2001).max(2099),
+          owner: ownerSchema,
+          basis: basisSchema,
+        }),
         request.query,
       );
-      return yearStats(ctx.db, user.id, q.year, q.owner, currentYearMonth(ctx.now()));
+      return yearStats(ctx.db, user.id, q.year, q.owner, currentYearMonth(ctx.now()), q.basis);
     });
 
     // ---- Export (re-auth: it hands over the whole visible ledger) ----

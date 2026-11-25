@@ -36,6 +36,13 @@
       "when": 1795396101542,
       "tag": "0004_budgets_stats",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1795513728273,
+      "tag": "0005_card_billing",
+      "breakpoints": true
     }
   ]
 }
