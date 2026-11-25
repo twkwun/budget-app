@@ -21,6 +21,7 @@ import BasisSwitch from '../components/BasisSwitch.vue';
 import EChart from '../components/EChart.vue';
 import ScopeSwitch from '../components/ScopeSwitch.vue';
 import { basisFromQuery } from '../ledger/basis.ts';
+import { movingAverage, trendSentences, type TrendMonth } from '../ledger/budget-trend.ts';
 import { changeRatio, compactKrw, monthLabel } from '../ledger/format.ts';
 import { useLedgerStore } from '../stores/ledger.ts';
 
@@ -281,11 +282,26 @@ function openMonth(item: { dataIndex: number; seriesIndex: number }): void {
 }
 
 // ---- Monthly 예산·지출 ----
+/** The month in progress and later ones stay out of the trend. */
+const trendMonths = computed<TrendMonth[]>(
+  () =>
+    stats.value?.months.map((m, i) => ({
+      month: m.month,
+      expense: m.expense,
+      budget: monthBudgets.value[i] ?? null,
+      open: m.month >= thisMonth,
+    })) ?? [],
+);
+const trendAverage = computed(() => movingAverage(trendMonths.value));
+const hasTrendLine = computed(() => trendAverage.value.some((v) => v !== null));
+const trendNotes = computed(() => trendSentences(trendMonths.value));
+
 const budgetMonthly = computed(() => {
   const s = stats.value;
   if (!s || !budgetComparable.value || !budgetedMonths.value) return null;
   const months = s.months;
   const budgets = monthBudgets.value;
+  const trend = trendAverage.value;
   const { within, excess } = splitOver(
     months.map((m) => m.expense),
     budgets,
@@ -313,6 +329,8 @@ const budgetMonthly = computed(() => {
               : `${formatKrw(b - m.expense)} 남음`,
           );
         }
+        const t = trend[i];
+        if (t != null) lines.push(`최근 3달 평균 ${formatKrw(t)}`);
         return lines.join('<br/>');
       },
     },
@@ -363,11 +381,23 @@ const budgetMonthly = computed(() => {
         barMaxWidth: BAR_MAX_WIDTH,
         column: 1,
       }),
+      {
+        // Spending trend: the average of each finished month and the two before.
+        type: 'line',
+        name: '최근 3달 평균',
+        z: 6,
+        symbol: 'circle',
+        symbolSize: 5,
+        connectNulls: false,
+        lineStyle: { color: theme.series[3], width: 2, type: 'dashed' },
+        itemStyle: { color: theme.series[3] },
+        data: trend.map((v) => v ?? '-'),
+      },
     ],
   });
 });
 
-/** Series: 0 예산 opens that month's budgets; 1–2 지출 open its spending. */
+/** Series: 0 예산 opens that month's budgets; 1–2 지출 open its spending; the rest are marks. */
 function openBudgetMonth(item: { dataIndex: number; seriesIndex: number }): void {
   const m = stats.value?.months[item.dataIndex];
   if (!m || item.seriesIndex > 2) return;
@@ -674,15 +704,19 @@ const periodLabel = computed(() =>
               <li><span class="swatch" style="background: var(--series-other)" />예산</li>
               <li><span class="swatch" style="background: var(--series-1)" />지출</li>
               <li v-if="overMonths"><span class="swatch hatched" />예산 초과</li>
+              <li v-if="hasTrendLine"><span class="swatch dashed trend" />최근 3달 평균</li>
             </ul>
             <p class="muted small" data-testid="budget-monthly-summary">
               전체 예산이 있던 {{ budgetedMonths }}달 중
               {{ overMonths ? `${overMonths}달 넘었습니다.` : '넘은 달이 없습니다.' }}
             </p>
+            <ul v-if="trendNotes.length" class="trend-notes" data-testid="budget-trend-notes">
+              <li v-for="note in trendNotes" :key="note">{{ note }}</li>
+            </ul>
             <EChart
               :build="budgetMonthly"
               :height="200"
-              label="월별 전체 예산과 지출 막대 그래프. 예산을 넘은 달은 지출 막대에 예산 자리 선과 넘은 부분 빗금이 있습니다. 예산 막대를 누르면 그 달 예산이, 지출 막대를 누르면 그 달 내역이 열립니다. 아래 표와 같은 내용입니다."
+              label="월별 전체 예산과 지출 막대 그래프, 지출의 최근 3달 평균 점선. 예산을 넘은 달은 지출 막대에 예산 자리 선과 넘은 부분 빗금이 있습니다. 예산 막대를 누르면 그 달 예산이, 지출 막대를 누르면 그 달 내역이 열립니다. 아래 표와 같은 내용입니다."
               data-testid="budget-monthly-chart"
               @select="openBudgetMonth"
             />
@@ -1034,6 +1068,16 @@ const periodLabel = computed(() =>
 }
 .legend-inline .swatch {
   margin-right: 0;
+}
+.swatch.dashed.trend {
+  border-top-color: var(--series-4);
+}
+.trend-notes {
+  margin: 0;
+  padding: 0 0 0 1.1em;
+  display: grid;
+  gap: 2px;
+  font-size: 0.85rem;
 }
 .swatch.hatched {
   background: repeating-linear-gradient(

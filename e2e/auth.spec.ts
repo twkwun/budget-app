@@ -440,6 +440,8 @@ test('budget on 홈, 통계 month into 내역, CSV export', async ({ page }) => 
   await expect(page.getByTestId('budget-monthly-summary')).toContainText(
     '1달 중 넘은 달이 없습니다',
   );
+  // One budgeted month is too few for a trend sentence.
+  await expect(page.getByTestId('budget-trend-notes')).toHaveCount(0);
   await page.getByTestId('monthly-table').locator('summary').click();
   const [y, m] = month.split('-').map(Number);
   await page
