@@ -429,6 +429,9 @@ test('budget on 홈, 통계 month into 내역, CSV export', async ({ page }) => 
   const over = budgets.locator('[data-state="over"]');
   await expect(over).toContainText('식비');
   await expect(over).toContainText('10,000원 초과');
+  // Over budget: a line marks the budget, only the excess is hatched.
+  await expect(over.getByTestId('budget-plan-line')).toHaveCount(1);
+  await expect(budgets.getByTestId('budget-plan-line')).toHaveCount(1);
 
   // 통계 → this month in the table → 내역 filtered to that month's spending.
   await page.goto('/stats');
@@ -439,7 +442,9 @@ test('budget on 홈, 통계 month into 내역, CSV export', async ({ page }) => 
     .getByTestId('monthly-table')
     .getByRole('link', { name: `${y}년 ${m}월` })
     .click();
-  await expect(page).toHaveURL(new RegExp(`/transactions\\?month=${month}&type=expense`));
+  await expect(page).toHaveURL(
+    new RegExp(`/transactions\\?month=${month}&basis=date&type=expense`),
+  );
   await expect(page.getByTestId('tx-row').filter({ hasText: '=예산테스트' })).toHaveCount(1);
 
   // CSV export of today: UTF-8 with BOM, formula-like text neutralised.

@@ -531,7 +531,7 @@ const periodLabel = computed(() =>
             class="muted small"
             data-testid="monthly-budget-hidden"
           >
-            예산 대비 표시는 「전체」·「쓴 날 기준」으로 볼 때만 나옵니다.
+            예산 대비 표시는 「가족 전체」·「사용일 기준」으로 볼 때만 나옵니다.
           </p>
           <EChart
             v-if="monthly"
