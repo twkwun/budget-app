@@ -21,7 +21,7 @@ export interface ReleaseNote {
  * Version shown in the app. Must equal the `version` in every package.json
  * (root, apps/web, apps/server, packages/shared); a test checks this.
  */
-export const APP_VERSION = '0.9.1';
+export const APP_VERSION = '0.10.0';
 
 export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
   new: '신규',
@@ -35,6 +35,29 @@ export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
  * screen, Patch with fixes and small improvements.
  */
 export const CHANGELOG: ReleaseNote[] = [
+  {
+    version: '0.10.0',
+    date: '2026-11-25',
+    title: '통계에 월별 예산·지출',
+    summary:
+      '통계 화면에 달마다 전체 예산과 지출을 나란히 견주는 그래프가 생겼습니다. 넘은 달은 예산선 위로 넘은 만큼이 빗금으로 보이고, 표에서 달마다 얼마나 넘었는지(남았는지) 볼 수 있습니다.',
+    highlights: [
+      '통계 「월별 예산·지출」: 예산(회색)과 지출(파란색) 막대, 넘은 달은 예산선과 초과분 빗금',
+      '「N달 중 M달 넘었습니다」 요약과 달마다 예산·지출·차이를 담은 표',
+    ],
+    changes: [
+      {
+        kind: 'new',
+        category: '통계',
+        text: '「월별 예산·지출」 카드: 달마다 전체 예산과 지출을 나란히 봅니다. 예산 막대를 누르면 그 달 예산이, 지출 막대를 누르면 그 달 내역이 열립니다. 「가족 전체」·「사용일 기준」으로 볼 때만 나오고, 전체 예산이 없으면 예산 화면으로 가는 안내가 나옵니다.',
+      },
+      {
+        kind: 'improved',
+        category: '통계',
+        text: '「월별 지출·수입」 표에 있던 「예산 대비」 열과 초과 요약은 「월별 예산·지출」로 옮겼습니다. 지출 막대의 예산선과 빗금은 그대로입니다.',
+      },
+    ],
+  },
   {
     version: '0.9.1',
     date: '2026-11-24',

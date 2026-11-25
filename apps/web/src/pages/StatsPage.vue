@@ -280,6 +280,104 @@ function openMonth(item: { dataIndex: number; seriesIndex: number }): void {
   void router.push(listLink(m.month, { type: item.seriesIndex === 2 ? 'income' : 'expense' }));
 }
 
+// ---- Monthly 예산·지출 ----
+const budgetMonthly = computed(() => {
+  const s = stats.value;
+  if (!s || !budgetComparable.value || !budgetedMonths.value) return null;
+  const months = s.months;
+  const budgets = monthBudgets.value;
+  const { within, excess } = splitOver(
+    months.map((m) => m.expense),
+    budgets,
+  );
+  return (theme: ChartTheme) => ({
+    animationDuration: 300,
+    grid: { left: 8, right: 8, top: 16, bottom: 4, containLabel: true },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      formatter: (params: { dataIndex: number }[]) => {
+        const i = params[0]?.dataIndex ?? 0;
+        const m = months[i];
+        if (!m) return '';
+        const b = budgets[i];
+        const lines = [
+          monthLabel(m.month),
+          b == null ? '예산 없음' : `예산 ${formatKrw(b)}`,
+          `지출 ${formatKrw(m.expense)}`,
+        ];
+        if (b != null) {
+          lines.push(
+            m.expense > b
+              ? `<b>${formatKrw(m.expense - b)} 초과</b>`
+              : `${formatKrw(b - m.expense)} 남음`,
+          );
+        }
+        return lines.join('<br/>');
+      },
+    },
+    xAxis: {
+      type: 'category',
+      data: months.map((m) => shortMonth(m.month)),
+      axisTick: { show: false },
+      axisLine: { lineStyle: { color: theme.grid } },
+      axisLabel: { color: theme.muted, fontSize: 11, interval: 0, hideOverlap: true },
+    },
+    yAxis: {
+      type: 'value',
+      splitNumber: 3,
+      axisLabel: { color: theme.muted, fontSize: 11, formatter: (v: number) => compactKrw(v) },
+      splitLine: { lineStyle: { color: theme.grid } },
+    },
+    series: [
+      {
+        type: 'bar',
+        name: '예산',
+        barMaxWidth: BAR_MAX_WIDTH,
+        barGap: BAR_GAP,
+        itemStyle: { color: theme.other, borderRadius: [4, 4, 0, 0] },
+        data: budgets.map((b) => b ?? '-'),
+      },
+      {
+        type: 'bar',
+        name: '지출',
+        stack: 'expense',
+        barMaxWidth: BAR_MAX_WIDTH,
+        itemStyle: { color: theme.series[0] },
+        data: months.map((m, i) => ({
+          value: within[i] ?? m.expense,
+          itemStyle: { borderRadius: within[i] === null ? [4, 4, 0, 0] : 0 },
+        })),
+      },
+      {
+        type: 'bar',
+        name: '예산 초과',
+        stack: 'expense',
+        barMaxWidth: BAR_MAX_WIDTH,
+        itemStyle: excessItemStyle(theme),
+        data: excess,
+      },
+      budgetLineSeries(theme, within, {
+        count: 2,
+        barGap: BAR_GAP,
+        barMaxWidth: BAR_MAX_WIDTH,
+        column: 1,
+      }),
+    ],
+  });
+});
+
+/** Series: 0 예산 opens that month's budgets; 1–2 지출 open its spending. */
+function openBudgetMonth(item: { dataIndex: number; seriesIndex: number }): void {
+  const m = stats.value?.months[item.dataIndex];
+  if (!m || item.seriesIndex > 2) return;
+  if (item.seriesIndex === 0) {
+    void router.push({ path: '/budgets', query: { month: m.month } });
+    return;
+  }
+  void router.push(listLink(m.month, { type: 'expense' }));
+}
+
 // ---- Category trend ----
 const TOP_CATEGORIES = 6;
 interface CategoryRow {
@@ -523,21 +621,11 @@ const periodLabel = computed(() =>
             <li v-if="yearStats"><span class="swatch dashed" />{{ year - 1 }}년 지출</li>
             <li v-if="overMonths"><span class="swatch hatched" />예산 초과 (흰 선 = 예산)</li>
           </ul>
-          <p v-if="overMonths" class="muted small" data-testid="monthly-over-note">
-            전체 예산이 있던 {{ budgetedMonths }}달 중 {{ overMonths }}달 넘었습니다.
-          </p>
-          <p
-            v-else-if="hasOverallBudget && !budgetComparable"
-            class="muted small"
-            data-testid="monthly-budget-hidden"
-          >
-            예산 대비 표시는 「가족 전체」·「사용일 기준」으로 볼 때만 나옵니다.
-          </p>
           <EChart
             v-if="monthly"
             :build="monthly"
             :height="200"
-            label="월별 지출과 수입 막대 그래프. 전체 예산을 넘은 달은 지출 막대에 예산 자리 선과 넘은 부분 빗금이 있습니다. 막대를 누르면 그 달 내역이 열립니다. 아래 표와 같은 내용입니다."
+            label="월별 지출과 수입 막대 그래프. 전체 예산을 넘은 달은 지출 막대에 예산 자리 선과 넘은 부분 빗금이 있습니다. 막대를 누르면 그 달 내역이 열립니다. 아래 표와 같은 내용입니다. 예산과 견준 숫자는 월별 예산·지출에 있습니다."
             data-testid="monthly-chart"
             @select="openMonth"
           />
@@ -550,7 +638,6 @@ const periodLabel = computed(() =>
                   <th scope="col" class="num">지출</th>
                   <th scope="col" class="num">수입</th>
                   <th v-if="yearStats" scope="col" class="num">작년 지출</th>
-                  <th v-if="overMonths" scope="col" class="num">예산 대비</th>
                 </tr>
               </thead>
               <tbody>
@@ -565,19 +652,85 @@ const periodLabel = computed(() =>
                   <td v-if="yearStats" class="num tabular muted">
                     {{ formatKrw(yearStats.previous.months[i]?.expense ?? 0) }}
                   </td>
-                  <td v-if="overMonths" class="num tabular">
-                    <template v-if="monthBudgets[i] == null">—</template>
-                    <span v-else-if="m.expense > (monthBudgets[i] ?? 0)" class="over-text">
-                      {{ formatKrw(m.expense - (monthBudgets[i] ?? 0)) }} 초과
-                    </span>
-                    <span v-else class="muted">
-                      {{ formatKrw((monthBudgets[i] ?? 0) - m.expense) }} 남음
-                    </span>
-                  </td>
                 </tr>
               </tbody>
             </table>
           </details>
+        </section>
+
+        <section
+          class="card wide"
+          aria-labelledby="budget-monthly-title"
+          data-testid="budget-monthly"
+        >
+          <div class="card-head">
+            <h2 id="budget-monthly-title">월별 예산·지출</h2>
+            <RouterLink :to="{ path: '/budgets', query: { view: 'months' } }" class="link-button">
+              분류별 보기
+            </RouterLink>
+          </div>
+          <template v-if="budgetMonthly">
+            <ul class="legend-inline" aria-hidden="true">
+              <li><span class="swatch" style="background: var(--series-other)" />예산</li>
+              <li><span class="swatch" style="background: var(--series-1)" />지출</li>
+              <li v-if="overMonths"><span class="swatch hatched" />예산 초과</li>
+            </ul>
+            <p class="muted small" data-testid="budget-monthly-summary">
+              전체 예산이 있던 {{ budgetedMonths }}달 중
+              {{ overMonths ? `${overMonths}달 넘었습니다.` : '넘은 달이 없습니다.' }}
+            </p>
+            <EChart
+              :build="budgetMonthly"
+              :height="200"
+              label="월별 전체 예산과 지출 막대 그래프. 예산을 넘은 달은 지출 막대에 예산 자리 선과 넘은 부분 빗금이 있습니다. 예산 막대를 누르면 그 달 예산이, 지출 막대를 누르면 그 달 내역이 열립니다. 아래 표와 같은 내용입니다."
+              data-testid="budget-monthly-chart"
+              @select="openBudgetMonth"
+            />
+            <details class="table-toggle" data-testid="budget-monthly-table">
+              <summary>표로 보기</summary>
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">달</th>
+                    <th scope="col" class="num">예산</th>
+                    <th scope="col" class="num">지출</th>
+                    <th scope="col" class="num">예산 대비</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(m, i) in stats.months" :key="m.month">
+                    <th scope="row">
+                      <RouterLink :to="listLink(m.month, { type: 'expense' })">{{
+                        monthLabel(m.month)
+                      }}</RouterLink>
+                    </th>
+                    <td class="num tabular">
+                      {{ monthBudgets[i] == null ? '—' : formatKrw(monthBudgets[i] ?? 0) }}
+                    </td>
+                    <td class="num tabular">{{ formatKrw(m.expense) }}</td>
+                    <td class="num tabular">
+                      <template v-if="monthBudgets[i] == null">—</template>
+                      <span v-else-if="m.expense > (monthBudgets[i] ?? 0)" class="over-text">
+                        {{ formatKrw(m.expense - (monthBudgets[i] ?? 0)) }} 초과
+                      </span>
+                      <span v-else class="muted">
+                        {{ formatKrw((monthBudgets[i] ?? 0) - m.expense) }} 남음
+                      </span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </details>
+          </template>
+          <p v-else-if="hasOverallBudget" class="muted small" data-testid="budget-monthly-hidden">
+            전체 예산은 가족 모두가 쓴 돈을 쓴 날 기준으로 셉니다. 「가족 전체」·「사용일 기준」으로
+            바꾸면 보입니다.
+          </p>
+          <p v-else class="muted small" data-testid="budget-monthly-none">
+            이 기간에는 전체 예산이 없습니다.
+            <RouterLink to="/budgets">예산 화면</RouterLink>에서 정하면 달마다 예산과 지출을 견줘 볼
+            수 있습니다.
+          </p>
         </section>
 
         <section class="card wide" aria-labelledby="category-title">

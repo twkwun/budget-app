@@ -436,6 +436,10 @@ test('budget on 홈, 통계 month into 내역, CSV export', async ({ page }) => 
   // 통계 → this month in the table → 내역 filtered to that month's spending.
   await page.goto('/stats');
   await expect(page.getByTestId('stats-expense')).not.toHaveText('0원');
+  // 월별 예산·지출: this month has an overall budget that was not exceeded.
+  await expect(page.getByTestId('budget-monthly-summary')).toContainText(
+    '1달 중 넘은 달이 없습니다',
+  );
   await page.getByTestId('monthly-table').locator('summary').click();
   const [y, m] = month.split('-').map(Number);
   await page
