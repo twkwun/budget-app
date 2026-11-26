@@ -1,5 +1,5 @@
 /** Budgets, 고정지출, statistics, CSV export and backup status. */
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { stat } from 'node:fs/promises';
 import type { FastifyPluginAsync } from 'fastify';
 import {
@@ -23,12 +23,14 @@ import {
 } from '@budget/shared';
 import { z } from 'zod';
 import { currentAuth, requireAdmin, requireRecentVerification } from '../auth/guard.ts';
+import type { UserRow } from '../auth/sessions.ts';
 import { createBackup, listBackups, pruneBackups } from '../backup/backup.ts';
 import { nextRunAt } from '../backup/scheduler.ts';
 import type { AppContext } from '../context.ts';
 import { accounts, categories, recurringExpenses } from '../db/schema.ts';
 import { HttpError, errors } from '../http/errors.ts';
 import { parse } from '../http/validation.ts';
+import { canSeeAccount, isAdmin, targetUser } from '../ledger/access.ts';
 import { monthSummary } from '../ledger/queries.ts';
 import {
   budgetCategoryOptions,
@@ -51,6 +53,8 @@ const ownerSchema = z
   .default('all')
   .transform((v) => (v === 'all' ? null : v));
 const idParam = z.object({ id: z.coerce.number().int().positive() });
+/** Whose budgets/고정지출: omitted means the viewer's own; others' only for an admin. */
+const userSchema = z.coerce.number().int().positive().optional();
 
 const recurringFields = {
   name: z.string().trim().min(1).max(MERCHANT_MAX_LENGTH),
@@ -75,7 +79,11 @@ export function planningRoutes(
   ctx: AppContext,
   options: { backups?: () => BackupRunner | null } = {},
 ): FastifyPluginAsync {
-  const assertRecurringRefs = (categoryId: number | null, accountId: number | null) => {
+  const assertRecurringRefs = (
+    user: UserRow,
+    categoryId: number | null,
+    accountId: number | null,
+  ) => {
     if (categoryId !== null) {
       const cat = ctx.db.select().from(categories).where(eq(categories.id, categoryId)).get();
       if (!cat || cat.kind !== 'expense' || cat.archivedAt) {
@@ -84,36 +92,58 @@ export function planningRoutes(
     }
     if (accountId !== null) {
       const acc = ctx.db.select().from(accounts).where(eq(accounts.id, accountId)).get();
-      if (!acc) throw errors.conflict('recurring_invalid', 'Unknown account');
+      if (!acc || !canSeeAccount(user, acc)) {
+        throw errors.conflict('recurring_invalid', 'Unknown account');
+      }
     }
   };
-  const assertKeyFree = (matchKey: string, exceptId?: number) => {
+  const assertKeyFree = (userId: number, matchKey: string, exceptId?: number) => {
     const other = ctx.db
       .select({ id: recurringExpenses.id })
       .from(recurringExpenses)
-      .where(eq(recurringExpenses.matchKey, matchKey))
+      .where(and(eq(recurringExpenses.userId, userId), eq(recurringExpenses.matchKey, matchKey)))
       .get();
     if (other && other.id !== exceptId) {
       throw errors.conflict('recurring_exists', 'An item with this match text already exists');
     }
   };
 
+  /** A 고정지출 item the viewer may change: their own, or anyone's for an admin. */
+  const ownRecurring = (user: UserRow, id: number) => {
+    const row = ctx.db.select().from(recurringExpenses).where(eq(recurringExpenses.id, id)).get();
+    if (!row || (row.userId !== user.id && !isAdmin(user))) throw errors.notFound();
+    return row;
+  };
+
+  /** A member asks only about themselves; an admin about the family or anyone. */
+  const statsOwner = (user: UserRow, owner: number | null): number | null =>
+    owner === null && isAdmin(user) ? null : targetUser(user, owner);
+
   let manualBackup: Promise<{ bytes: number }> | null = null;
 
   return async (app) => {
-    // ---- Budgets (shared by the family; any member may set them) ----
+    // ---- Budgets (every member keeps their own; an admin may see and set anyone's) ----
 
     app.get('/budgets', async (request): Promise<BudgetOverview> => {
       const { user } = currentAuth(request);
       const q = parse(
-        z.object({ month: monthSchema.default(currentYearMonth(ctx.now())) }),
+        z.object({ month: monthSchema.default(currentYearMonth(ctx.now())), user: userSchema }),
         request.query,
       );
-      const summary = monthSummary(ctx.db, user.id, q.month, null);
+      const userId = targetUser(user, q.user);
+      const summary = monthSummary(ctx.db, user.id, q.month, userId);
       return {
-        ...monthBudgets(ctx.db, q.month, ctx.now(), summary.expense, summary.expenseByCategory),
+        userId,
+        ...monthBudgets(
+          ctx.db,
+          userId,
+          q.month,
+          ctx.now(),
+          summary.expense,
+          summary.expenseByCategory,
+        ),
         categoryOptions: budgetCategoryOptions(ctx.db),
-        history: budgetHistory(ctx.db),
+        history: budgetHistory(ctx.db, userId),
       };
     });
 
@@ -130,11 +160,13 @@ export function planningRoutes(
             .min(BUDGET_MONTHS_MIN)
             .max(BUDGET_MONTHS_MAX)
             .default(BUDGET_MONTHS_DEFAULT),
+          user: userSchema,
         }),
         request.query,
       );
       const to = q.to > current ? current : q.to;
-      return budgetMonths(ctx.db, user.id, addMonths(to, 1 - q.count), to, ctx.now());
+      const userId = targetUser(user, q.user);
+      return budgetMonths(ctx.db, user.id, userId, addMonths(to, 1 - q.count), to, ctx.now());
     });
 
     app.put('/budgets', async (request, reply) => {
@@ -144,10 +176,11 @@ export function planningRoutes(
           month: monthSchema,
           categoryId: z.number().int().positive().nullable(),
           amount: z.number().int().min(0).max(MAX_AMOUNT),
+          userId: z.number().int().positive().optional(),
         }),
         request.body,
       );
-      setBudget(ctx.db, body, user.id);
+      setBudget(ctx.db, body, targetUser(user, body.userId), user.id);
       return reply.code(204).send();
     });
 
@@ -156,27 +189,35 @@ export function planningRoutes(
     app.get('/recurring', async (request): Promise<RecurringOverview> => {
       const { user } = currentAuth(request);
       const q = parse(
-        z.object({ month: monthSchema.default(currentYearMonth(ctx.now())) }),
+        z.object({ month: monthSchema.default(currentYearMonth(ctx.now())), user: userSchema }),
         request.query,
       );
-      refreshSuggestions(ctx.db, ctx.now());
-      return recurringOverview(ctx.db, user.id, q.month, ctx.now());
+      const userId = targetUser(user, q.user);
+      refreshSuggestions(ctx.db, ctx.now(), userId);
+      return recurringOverview(ctx.db, user.id, userId, q.month, ctx.now());
     });
 
     app.post('/recurring', async (request, reply) => {
       const { user } = currentAuth(request);
       const body = parse(
-        z.object({ ...recurringFields, matchKey: recurringFields.matchKey.optional() }),
+        z.object({
+          ...recurringFields,
+          matchKey: recurringFields.matchKey.optional(),
+          userId: z.number().int().positive().optional(),
+        }),
         request.body,
       );
-      const matchKey = body.matchKey ?? normalizeMerchant(body.name);
+      const { userId: requested, ...fields } = body;
+      const userId = targetUser(user, requested);
+      const matchKey = fields.matchKey ?? normalizeMerchant(fields.name);
       if (matchKey.length < 2) throw errors.validation('Name is too short to match payments');
-      assertRecurringRefs(body.categoryId, body.accountId);
-      assertKeyFree(matchKey);
+      assertRecurringRefs(user, fields.categoryId, fields.accountId);
+      assertKeyFree(userId, matchKey);
       const row = ctx.db
         .insert(recurringExpenses)
         .values({
-          ...body,
+          ...fields,
+          userId,
           matchKey,
           status: 'confirmed',
           source: 'manual',
@@ -188,6 +229,7 @@ export function planningRoutes(
     });
 
     app.patch('/recurring/:id', async (request, reply) => {
+      const { user } = currentAuth(request);
       const { id } = parse(idParam, request.params);
       const body = parse(
         z
@@ -198,13 +240,13 @@ export function planningRoutes(
           .partial(),
         request.body,
       );
-      const row = ctx.db.select().from(recurringExpenses).where(eq(recurringExpenses.id, id)).get();
-      if (!row) throw errors.notFound();
+      const row = ownRecurring(user, id);
       assertRecurringRefs(
+        user,
         body.categoryId === undefined ? null : body.categoryId,
-        body.accountId === undefined ? null : body.accountId,
+        body.accountId === undefined || body.accountId === row.accountId ? null : body.accountId,
       );
-      if (body.matchKey !== undefined) assertKeyFree(body.matchKey, id);
+      if (body.matchKey !== undefined) assertKeyFree(row.userId, body.matchKey, id);
       if (body.status === 'suggested' && row.source === 'manual') {
         throw errors.conflict('recurring_invalid', 'Items added by hand cannot be suggestions');
       }
@@ -216,9 +258,9 @@ export function planningRoutes(
 
     // A detected item is kept as dismissed so it is not suggested again.
     app.delete('/recurring/:id', async (request, reply) => {
+      const { user } = currentAuth(request);
       const { id } = parse(idParam, request.params);
-      const row = ctx.db.select().from(recurringExpenses).where(eq(recurringExpenses.id, id)).get();
-      if (!row) throw errors.notFound();
+      const row = ownRecurring(user, id);
       if (row.source === 'manual') {
         ctx.db.delete(recurringExpenses).where(eq(recurringExpenses.id, id)).run();
       } else {
@@ -240,7 +282,7 @@ export function planningRoutes(
         request.query,
       );
       if (!isValidRange(q.from, q.to)) throw errors.validation('Range must be 1–36 months');
-      return rangeStats(ctx.db, user.id, q.from, q.to, q.owner, q.basis);
+      return rangeStats(ctx.db, user.id, q.from, q.to, statsOwner(user, q.owner), q.basis);
     });
 
     app.get('/stats/year', async (request): Promise<YearStats> => {
@@ -253,7 +295,14 @@ export function planningRoutes(
         }),
         request.query,
       );
-      return yearStats(ctx.db, user.id, q.year, q.owner, currentYearMonth(ctx.now()), q.basis);
+      return yearStats(
+        ctx.db,
+        user.id,
+        q.year,
+        statsOwner(user, q.owner),
+        currentYearMonth(ctx.now()),
+        q.basis,
+      );
     });
 
     // ---- Export (re-auth: it hands over the whole visible ledger) ----

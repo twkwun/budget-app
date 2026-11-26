@@ -26,6 +26,7 @@ import type { AppContext } from '../context.ts';
 import { accounts, categories, transactions, users } from '../db/schema.ts';
 import { errors } from '../http/errors.ts';
 import { categorize } from '../ledger/categorize.ts';
+import { canSeeAccount } from '../ledger/access.ts';
 import { parse } from '../http/validation.ts';
 import { homeSummary } from '../planning/summary.ts';
 import {
@@ -132,12 +133,18 @@ function validateReferences(ctx: AppContext, user: UserRow, next: Final, prev?: 
   }
   if (next.accountId !== null) {
     const acc = ctx.db.select().from(accounts).where(eq(accounts.id, next.accountId)).get();
-    if (!acc) throw errors.conflict('account_invalid', 'Unknown account');
+    if (!acc || (!canSeeAccount(user, acc) && prev?.accountId !== acc.id)) {
+      throw errors.conflict('account_invalid', 'Unknown account');
+    }
     if (acc.archivedAt && prev?.accountId !== acc.id) {
       throw errors.conflict('account_invalid', 'Account is archived');
     }
   }
   if (next.ownerUserId !== prev?.ownerUserId) {
+    // Members only keep their own ledger; an admin may record for anyone.
+    if (next.ownerUserId !== user.id && user.role !== 'admin') {
+      throw errors.forbidden('Only an admin can record for another member');
+    }
     const owner = ctx.db.select().from(users).where(eq(users.id, next.ownerUserId)).get();
     if (!owner || owner.disabledAt) throw errors.validation('Unknown member');
   }
@@ -200,7 +207,9 @@ export function transactionRoutes(ctx: AppContext): FastifyPluginAsync {
       }
       if (body.accountId != null) {
         const acc = ctx.db.select().from(accounts).where(eq(accounts.id, body.accountId)).get();
-        if (!acc || acc.archivedAt) throw errors.conflict('account_invalid', 'Unknown account');
+        if (!acc || acc.archivedAt || !canSeeAccount(user, acc)) {
+          throw errors.conflict('account_invalid', 'Unknown account');
+        }
       }
 
       const rows: TxRow[] = [];
@@ -302,7 +311,7 @@ export function transactionRoutes(ctx: AppContext): FastifyPluginAsync {
       return reply.code(201).send(getTransaction(ctx.db, user.id, created.id));
     });
 
-    // Any member may edit any transaction they can see (family ledger).
+    // Anyone may edit a transaction they can see: members their own, admins any.
     app.patch('/transactions/:id', async (request) => {
       const { user } = currentAuth(request);
       const { id } = parse(idParam, request.params);
@@ -388,7 +397,7 @@ export function transactionRoutes(ctx: AppContext): FastifyPluginAsync {
       );
       return homeSummary(
         ctx.db,
-        user.id,
+        user,
         q.month,
         q.owner === 'all' ? null : q.owner,
         ctx.now(),

@@ -11,6 +11,7 @@ import {
 import { api } from '../api/client.ts';
 import { errorMessage } from '../auth/messages.ts';
 import { fromLocalInput, toLocalInput } from '../ledger/format.ts';
+import { useAuthStore } from '../stores/auth.ts';
 import { useLedgerStore } from '../stores/ledger.ts';
 import AmountInput from './AmountInput.vue';
 import BottomSheet from './BottomSheet.vue';
@@ -19,6 +20,7 @@ import TypeSwitch from './TypeSwitch.vue';
 
 const props = defineProps<{ transaction: TransactionInfo }>();
 const emit = defineEmits<{ close: []; changed: [] }>();
+const auth = useAuthStore();
 const ledger = useLedgerStore();
 const tx = props.transaction;
 
@@ -133,7 +135,7 @@ function remove(): void {
           </option>
         </select>
       </label>
-      <label class="field">
+      <label v-if="auth.isAdmin && ledger.members.length > 1" class="field">
         <span>누구 것</span>
         <select v-model="ownerUserId">
           <option

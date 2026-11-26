@@ -1,6 +1,7 @@
 /**
- * Budgets: one overall monthly budget plus optional budgets on top-level
- * expense categories. A budget set for a month stays in force for later months
+ * Budgets: every member keeps their own — one overall monthly budget plus
+ * optional budgets on top-level expense categories — measured against their
+ * own spending. A budget set for a month stays in force for later months
  * until it is changed; changing it in a month never rewrites earlier months.
  */
 import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
@@ -35,8 +36,8 @@ interface BudgetRow {
   archivedAt: Date | null;
 }
 
-/** Every budget change up to `through`, oldest month first. */
-function budgetRowsThrough(db: AppDatabase, through: YearMonth): BudgetRow[] {
+/** Every change to `userId`'s budgets up to `through`, oldest month first. */
+function budgetRowsThrough(db: AppDatabase, userId: number, through: YearMonth): BudgetRow[] {
   return db
     .select({
       categoryId: budgets.categoryId,
@@ -48,7 +49,7 @@ function budgetRowsThrough(db: AppDatabase, through: YearMonth): BudgetRow[] {
     })
     .from(budgets)
     .leftJoin(categories, eq(budgets.categoryId, categories.id))
-    .where(sql`${budgets.month} <= ${through}`)
+    .where(and(eq(budgets.userId, userId), sql`${budgets.month} <= ${through}`))
     .orderBy(asc(budgets.month))
     .all();
 }
@@ -75,9 +76,9 @@ export function resolveBudgets(rows: BudgetRow[], month: YearMonth): BudgetSetti
     }));
 }
 
-/** Budgets in force for `month`: per category, the latest row at or before it (amount > 0). */
-export function budgetsInForce(db: AppDatabase, month: YearMonth): BudgetSetting[] {
-  return resolveBudgets(budgetRowsThrough(db, month), month);
+/** `userId`'s budgets in force for `month`: per category, the latest row at or before it (amount > 0). */
+export function budgetsInForce(db: AppDatabase, userId: number, month: YearMonth): BudgetSetting[] {
+  return resolveBudgets(budgetRowsThrough(db, userId, month), month);
 }
 
 /** Share (0–1) of the month elapsed at `now`, or null when `now` is outside the month. */
@@ -104,11 +105,12 @@ function progress(setting: BudgetSetting, spent: number): BudgetProgress {
 }
 
 /**
- * Progress of the budgets in force for `month`, against spending the viewer can
- * see: `totalExpense` and the top-level rollup `byCategory` (children included).
+ * Progress of `userId`'s budgets in force for `month`, against that member's
+ * spending: `totalExpense` and the top-level rollup `byCategory` (children included).
  */
 export function monthBudgets(
   db: AppDatabase,
+  userId: number,
   month: YearMonth,
   now: number,
   totalExpense: number,
@@ -120,7 +122,7 @@ export function monthBudgets(
     ...p,
     pace: elapsed === null ? null : paceOf(p.amount, p.spent, elapsed),
   });
-  const settings = budgetsInForce(db, month);
+  const settings = budgetsInForce(db, userId, month);
   const overall = settings.find((s) => s.categoryId === null);
   const sortOrder = new Map(
     db
@@ -150,24 +152,25 @@ function percentOf(spent: number, budget: number): number {
 }
 
 /**
- * 월별 비교: the budgets in force each month of `from`–`to` against the
- * family's spending the viewer can see. Spending is summed exactly like the
- * statistics (and like `monthBudgets`): expense only, cancelled left out,
- * a category with its children.
+ * 월별 비교: `userId`'s budgets in force each month of `from`–`to` against
+ * that member's spending (as far as the viewer can see it). Spending is
+ * summed exactly like the statistics (and like `monthBudgets`): expense only,
+ * cancelled left out, a category with its children.
  */
 export function budgetMonths(
   db: AppDatabase,
   viewerId: number,
+  userId: number,
   from: YearMonth,
   to: YearMonth,
   now: number,
 ): BudgetMonthsReport {
   const months = monthsBetween(from, to);
   const currentMonth = toYearMonth(now);
-  const rows = budgetRowsThrough(db, to);
+  const rows = budgetRowsThrough(db, userId, to);
   const inForce = months.map((m) => new Map(resolveBudgets(rows, m).map((s) => [s.categoryId, s])));
 
-  const where = rangeWhere(viewerId, from, to, null);
+  const where = rangeWhere(viewerId, from, to, userId);
   const totalSpent = monthTotals(db, where, months).map((m) => m.expense);
   const spentBy = new Map(categorySeries(db, where, months).map((c) => [c.categoryId, c.values]));
 
@@ -261,7 +264,7 @@ export function budgetCategoryOptions(db: AppDatabase): { id: number; name: stri
     .all();
 }
 
-export function budgetHistory(db: AppDatabase, limit = 100): BudgetChange[] {
+export function budgetHistory(db: AppDatabase, userId: number, limit = 100): BudgetChange[] {
   return db
     .select({
       id: budgets.id,
@@ -275,6 +278,7 @@ export function budgetHistory(db: AppDatabase, limit = 100): BudgetChange[] {
     .from(budgets)
     .leftJoin(categories, eq(budgets.categoryId, categories.id))
     .leftJoin(users, eq(budgets.updatedByUserId, users.id))
+    .where(eq(budgets.userId, userId))
     .orderBy(desc(budgets.month), desc(budgets.updatedAt), desc(budgets.id))
     .limit(limit)
     .all()
@@ -290,13 +294,14 @@ export function budgetHistory(db: AppDatabase, limit = 100): BudgetChange[] {
 }
 
 /**
- * Set the budget for `categoryId` (null = overall) from `month` on. Earlier
- * months keep what was in force for them. Setting the amount that was already
- * in force before `month` drops this month's row instead of adding a no-op.
+ * Set `ownerId`'s budget for `categoryId` (null = overall) from `month` on.
+ * Earlier months keep what was in force for them. Setting the amount that was
+ * already in force before `month` drops this month's row instead of adding a no-op.
  */
 export function setBudget(
   db: AppDatabase,
   input: { month: YearMonth; categoryId: number | null; amount: number },
+  ownerId: number,
   userId: number,
 ): void {
   const { month, categoryId, amount } = input;
@@ -308,8 +313,10 @@ export function setBudget(
     }
     if (cat.archivedAt) throw errors.conflict('budget_invalid', 'Category is archived');
   }
-  const sameCategory =
-    categoryId === null ? isNull(budgets.categoryId) : eq(budgets.categoryId, categoryId);
+  const sameCategory = and(
+    eq(budgets.userId, ownerId),
+    categoryId === null ? isNull(budgets.categoryId) : eq(budgets.categoryId, categoryId),
+  );
   db.transaction((tx) => {
     const before = tx
       .select({ amount: budgets.amount })
@@ -334,7 +341,9 @@ export function setBudget(
         .where(eq(budgets.id, existing.id))
         .run();
     } else {
-      tx.insert(budgets).values({ month, categoryId, amount, updatedByUserId: userId }).run();
+      tx.insert(budgets)
+        .values({ userId: ownerId, month, categoryId, amount, updatedByUserId: userId })
+        .run();
     }
   });
 }

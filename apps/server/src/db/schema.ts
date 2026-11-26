@@ -433,6 +433,10 @@ export const budgets = sqliteTable(
   'budgets',
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
+    /** Whose budget it is: every member keeps their own budgets. */
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
     /** Household-zone month, `YYYY-MM`. */
     month: text('month').notNull(),
     /** Null means the overall monthly budget. */
@@ -451,21 +455,25 @@ export const budgets = sqliteTable(
   (t) => [
     // SQLite treats NULLs as distinct in unique indexes, so the overall budget
     // (null category) gets its own partial index.
-    uniqueIndex('budgets_month_category_unique')
-      .on(t.month, t.categoryId)
+    uniqueIndex('budgets_user_month_category_unique')
+      .on(t.userId, t.month, t.categoryId)
       .where(sql`category_id is not null`),
-    uniqueIndex('budgets_month_total_unique')
-      .on(t.month)
+    uniqueIndex('budgets_user_month_total_unique')
+      .on(t.userId, t.month)
       .where(sql`category_id is null`),
     check('budgets_amount_check', sql`amount >= 0`),
   ],
 );
 
-/** 고정지출: monthly payments the family expects (detected or added by hand). */
+/** 고정지출: monthly payments a member expects (detected or added by hand). */
 export const recurringExpenses = sqliteTable(
   'recurring_expenses',
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
+    /** Whose item it is: matched against that member's own payments. */
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     /** normalizeMerchant() text a payment's merchant must contain to match. */
     matchKey: text('match_key').notNull(),
@@ -484,7 +492,7 @@ export const recurringExpenses = sqliteTable(
     updatedAt: updatedAt(),
   },
   (t) => [
-    uniqueIndex('recurring_expenses_match_key_unique').on(t.matchKey),
+    uniqueIndex('recurring_expenses_user_match_key_unique').on(t.userId, t.matchKey),
     index('recurring_expenses_status_idx').on(t.status),
     check('recurring_day_check', sql`day_of_month between 1 and 31`),
     check('recurring_amount_check', sql`amount > 0`),

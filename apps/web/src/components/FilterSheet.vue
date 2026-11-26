@@ -7,12 +7,14 @@ import {
   TRANSACTION_TYPE_LABELS,
 } from '@budget/shared';
 import type { ListFilters } from '../ledger/filters.ts';
+import { useAuthStore } from '../stores/auth.ts';
 import { useLedgerStore } from '../stores/ledger.ts';
 import AmountInput from './AmountInput.vue';
 import BottomSheet from './BottomSheet.vue';
 
 const props = defineProps<{ filters: ListFilters }>();
 const emit = defineEmits<{ close: []; apply: [filters: ListFilters] }>();
+const auth = useAuthStore();
 const ledger = useLedgerStore();
 
 const draft = reactive({
@@ -88,7 +90,7 @@ function clear(): void {
           <option v-for="a in ledger.accounts" :key="a.id" :value="a.id">{{ a.name }}</option>
         </select>
       </label>
-      <label class="field">
+      <label v-if="auth.isAdmin && ledger.members.length > 1" class="field">
         <span>구성원</span>
         <select v-model="draft.ownerId">
           <option value="">전체</option>

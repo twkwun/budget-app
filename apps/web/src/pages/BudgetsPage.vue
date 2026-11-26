@@ -16,10 +16,22 @@ import BottomSheet from '../components/BottomSheet.vue';
 import BudgetMeter from '../components/BudgetMeter.vue';
 import BudgetMonthsView from '../components/BudgetMonthsView.vue';
 import MonthNav from '../components/MonthNav.vue';
+import ScopeSwitch from '../components/ScopeSwitch.vue';
 import { monthLabel } from '../ledger/format.ts';
+import { usePlanUser } from '../ledger/plan-user.ts';
+import { useLedgerStore } from '../stores/ledger.ts';
 
 const route = useRoute();
 const router = useRouter();
+const ledger = useLedgerStore();
+/** Budgets are personal; an admin may look at (and set) a member's. */
+const plan = usePlanUser();
+const planUser = computed<'all' | number>({
+  get: () => plan.userId.value,
+  set: (u) => {
+    if (typeof u === 'number') plan.userId.value = u;
+  },
+});
 
 type View = 'month' | 'months';
 /** 이 달 (set and follow one month) or 월별 비교 (many months side by side). */
@@ -27,10 +39,12 @@ const view = computed<View>({
   get: () => (route.query.view === 'months' ? 'months' : 'month'),
   set: (v) =>
     void router.replace({
-      query:
-        v === 'months'
+      query: {
+        ...(v === 'months'
           ? { view: 'months' }
-          : { month: route.query.month === undefined ? undefined : route.query.month },
+          : { month: route.query.month === undefined ? undefined : route.query.month }),
+        user: route.query.user,
+      },
     }),
 });
 
@@ -54,18 +68,19 @@ async function load(): Promise<void> {
   loading.value = true;
   error.value = '';
   try {
-    data.value = await api.get<BudgetOverview>(`/budgets?month=${month.value}`);
+    data.value = await api.get<BudgetOverview>(`/budgets?month=${month.value}${plan.param.value}`);
   } catch (e) {
     error.value = errorMessage(e);
   } finally {
     loading.value = false;
   }
 }
-watch([month, view], () => {
+watch([month, view, plan.userId], () => {
   if (view.value === 'month') void load();
 });
 onMounted(() => {
   if (view.value === 'month') void load();
+  void ledger.load().catch(() => {});
 });
 
 /** Categories without a budget this month, for 분류 예산 추가. */
@@ -100,6 +115,7 @@ async function save(amount: number): Promise<void> {
       month: month.value,
       categoryId: editing.value.categoryId,
       amount,
+      ...(plan.isSelf.value ? {} : { userId: plan.userId.value }),
     });
     notice.value =
       amount === 0
@@ -145,6 +161,20 @@ const changedAt = (iso: string) => {
       >
         월별 비교
       </button>
+    </div>
+
+    <div v-if="plan.canPick.value" class="whose" data-testid="budget-user">
+      <ScopeSwitch
+        v-model="planUser"
+        :members="plan.choices.value"
+        :with-all="false"
+        label="누구의 예산"
+      />
+      <p class="muted small">
+        예산은 사람마다 따로 정하고, 그 사람이 쓴 돈으로 셉니다.<template v-if="!plan.isSelf.value">
+          지금 {{ plan.name.value }}님의 예산을 보고 있습니다.</template
+        >
+      </p>
     </div>
 
     <BudgetMonthsView v-if="view === 'months'" />
@@ -196,7 +226,12 @@ const changedAt = (iso: string) => {
                 <RouterLink
                   :to="{
                     path: '/transactions',
-                    query: { month, type: 'expense', category: String(b.categoryId) },
+                    query: {
+                      month,
+                      type: 'expense',
+                      category: String(b.categoryId),
+                      ...plan.ownerFilter.value,
+                    },
                   }"
                   class="link-button"
                 >
@@ -314,9 +349,13 @@ const changedAt = (iso: string) => {
   background: var(--accent-soft);
   color: var(--accent);
 }
-.head {
+.head,
+.whose {
   display: grid;
   gap: 6px;
+}
+.whose p {
+  margin: 0;
 }
 .head p {
   margin: 0;

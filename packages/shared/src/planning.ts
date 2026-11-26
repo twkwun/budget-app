@@ -57,6 +57,8 @@ export interface BudgetChange {
 }
 
 export interface BudgetOverview extends MonthBudgets {
+  /** Whose budgets these are (every member keeps their own). */
+  userId: number;
   /** Top-level expense categories that can carry a budget. */
   categoryOptions: { id: number; name: string }[];
   history: BudgetChange[];
@@ -155,6 +157,8 @@ export interface RecurringMonthItem extends RecurringItem {
 }
 
 export interface RecurringOverview {
+  /** Whose 고정지출 these are (every member keeps their own). */
+  userId: number;
   month: YearMonth;
   /** Confirmed items with their state this month, by expected date. */
   items: RecurringMonthItem[];
@@ -238,7 +242,11 @@ export interface BackupStatus {
 
 /** 홈 summary: the month summary plus budgets and 고정지출 (family scope only). */
 export interface HomeSummary extends MonthSummary {
-  /** null in a member scope: budgets are for the whole family. */
+  /**
+   * Whose budgets and 고정지출 are shown: the member in scope, or the viewer
+   * themself in the 전체 scope. Measured against that member's own spending.
+   */
+  planUserId: number;
   budgets: MonthBudgets | null;
   recurring: {
     items: RecurringMonthItem[];

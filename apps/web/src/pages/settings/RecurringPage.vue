@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
 import {
   formatKrw,
   normalizeMerchant,
@@ -13,10 +13,21 @@ import { errorMessage } from '../../auth/messages.ts';
 import AmountInput from '../../components/AmountInput.vue';
 import BottomSheet from '../../components/BottomSheet.vue';
 import CategorySelect from '../../components/CategorySelect.vue';
+import ScopeSwitch from '../../components/ScopeSwitch.vue';
 import { dayLabel } from '../../ledger/format.ts';
+import { usePlanUser } from '../../ledger/plan-user.ts';
 import { useLedgerStore } from '../../stores/ledger.ts';
 
 const ledger = useLedgerStore();
+/** 고정지출 are personal; an admin may look at (and manage) a member's. */
+const plan = usePlanUser();
+const planUser = computed<'all' | number>({
+  get: () => plan.userId.value,
+  set: (u) => {
+    if (typeof u === 'number') plan.userId.value = u;
+  },
+});
+const overviewPath = () => `/recurring?${plan.param.value.slice(1)}`;
 const data = ref<RecurringOverview | null>(null);
 const loading = ref(true);
 const error = ref('');
@@ -40,11 +51,12 @@ async function run(action: () => Promise<void>): Promise<boolean> {
 async function load(): Promise<void> {
   loading.value = true;
   await run(async () => {
-    [data.value] = await Promise.all([api.get<RecurringOverview>('/recurring'), ledger.load()]);
+    [data.value] = await Promise.all([api.get<RecurringOverview>(overviewPath()), ledger.load()]);
   });
   loading.value = false;
 }
 onMounted(() => void load());
+watch(plan.userId, () => void load());
 
 const STATE = { paid: '이번 달 결제됨', upcoming: '이번 달 예정', late: '이번 달 아직 없음' };
 const seenText = (item: RecurringItem) =>
@@ -91,13 +103,16 @@ async function save(): Promise<void> {
   };
   const ok = await run(async () => {
     if (target === 'new') {
-      await api.post('/recurring', body);
+      await api.post('/recurring', {
+        ...body,
+        ...(plan.isSelf.value ? {} : { userId: plan.userId.value }),
+      });
       notice.value = `‘${form.name}’을 고정지출로 추가했습니다.`;
     } else {
       await api.patch(`/recurring/${target.id}`, body);
       notice.value = `‘${form.name}’을 저장했습니다.`;
     }
-    data.value = await api.get<RecurringOverview>('/recurring');
+    data.value = await api.get<RecurringOverview>(overviewPath());
   });
   if (ok) editing.value = null;
 }
@@ -106,7 +121,7 @@ const setStatus = (item: RecurringItem, status: RecurringItem['status'], message
   run(async () => {
     await api.patch(`/recurring/${item.id}`, { status });
     notice.value = message;
-    data.value = await api.get<RecurringOverview>('/recurring');
+    data.value = await api.get<RecurringOverview>(overviewPath());
   });
 
 const remove = (item: RecurringItem) =>
@@ -114,7 +129,7 @@ const remove = (item: RecurringItem) =>
     if (!window.confirm(`‘${item.name}’을 고정지출에서 뺄까요?`)) return;
     await api.delete(`/recurring/${item.id}`);
     notice.value = `‘${item.name}’을 뺐습니다.`;
-    data.value = await api.get<RecurringOverview>('/recurring');
+    data.value = await api.get<RecurringOverview>(overviewPath());
   });
 </script>
 
@@ -124,8 +139,19 @@ const remove = (item: RecurringItem) =>
     <p class="muted small">
       매달 나가는 돈을 등록해 두면 홈에서 이번 달에 아직 안 나간 것을 볼 수 있습니다. 같은
       가맹점에서 비슷한 금액이 석 달 이상 매달 한 번씩 나가면 후보로 찾아 드립니다. 금액이 ±20%
-      안이면 결제된 것으로 봅니다.
+      안이면 결제된 것으로 봅니다. 고정지출은 사람마다 따로 관리하고, 그 사람이 쓴 돈에서 찾습니다.
     </p>
+    <div v-if="plan.canPick.value" class="whose" data-testid="recurring-user">
+      <ScopeSwitch
+        v-model="planUser"
+        :members="plan.choices.value"
+        :with-all="false"
+        label="누구의 고정지출"
+      />
+      <p v-if="!plan.isSelf.value" class="muted small">
+        지금 {{ plan.name.value }}님의 고정지출을 보고 있습니다.
+      </p>
+    </div>
     <p v-if="notice" class="notice" role="status">{{ notice }}</p>
     <p v-if="error" class="error-text" role="alert">
       {{ error }} <button type="button" class="link-button" @click="load">다시 시도</button>
@@ -316,6 +342,13 @@ const remove = (item: RecurringItem) =>
   display: grid;
   gap: 12px;
   max-width: 720px;
+}
+.whose {
+  display: grid;
+  gap: 6px;
+}
+.whose p {
+  margin: 0;
 }
 .small {
   font-size: 0.85rem;

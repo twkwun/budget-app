@@ -1,7 +1,14 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import type { EntryDefaults, MonthSummary, TransactionInfo, TransactionPage } from '@budget/shared';
+import type {
+  EntryDefaults,
+  MonthSummary,
+  RangeStats,
+  TransactionInfo,
+  TransactionPage,
+} from '@budget/shared';
 import { transactions } from '../src/db/schema.ts';
 import { eq } from 'drizzle-orm';
+import { invite } from './support/invite.ts';
 import { addAccount, addTx, code, ledgerSetup } from './support/ledger.ts';
 
 let close: (() => Promise<void>) | undefined;
@@ -138,6 +145,104 @@ describe('summary rules', () => {
   });
 });
 
+describe('separate ledgers', () => {
+  it("keeps members out of each other's transactions; an admin sees everyone's", async () => {
+    const t = await setup();
+    const other = await invite(t, t.admin, {
+      displayName: '둘째',
+      loginName: 'second',
+      password: 'battery staple 3',
+    });
+    await other.patch('/api/me', { lockTimeoutSeconds: null });
+    const at = '2026-11-08T10:00:00+09:00';
+    const mine = await addTx(t.member, { amount: 1000, occurredAt: at, merchant: '구성원가게' });
+    const theirs = await addTx(other, { amount: 2000, occurredAt: at, merchant: '둘째가게' });
+    const admins = await addTx(t.admin, { amount: 4000, occurredAt: at, merchant: '관리자가게' });
+
+    const list = (await t.member.get('/api/transactions?month=2026-11')).json<TransactionPage>();
+    expect(list.items.map((i) => i.id)).toEqual([mine.id]);
+    expect(list.totals?.expense).toBe(1000);
+    const search = (
+      await t.member.get('/api/transactions?month=2026-11&q=가게')
+    ).json<TransactionPage>();
+    expect(search.items.map((i) => i.id)).toEqual([mine.id]);
+    const summary = (await t.member.get('/api/summary?month=2026-11')).json<MonthSummary>();
+    expect(summary.expense).toBe(1000);
+    for (const id of [theirs.id, admins.id]) {
+      expect((await t.member.get(`/api/transactions/${id}`)).statusCode).toBe(404);
+      expect((await t.member.patch(`/api/transactions/${id}`, { amount: 1 })).statusCode).toBe(404);
+      expect((await t.member.delete(`/api/transactions/${id}`)).statusCode).toBe(404);
+    }
+    expect(
+      (
+        await t.member.post('/api/transactions/bulk', {
+          ids: [mine.id, theirs.id],
+          status: 'confirmed',
+        })
+      ).statusCode,
+    ).toBe(404);
+    // Asking for someone else's scope is refused rather than quietly empty.
+    expect((await t.member.get(`/api/summary?owner=${t.adminId}`)).statusCode).toBe(403);
+    expect(
+      (await t.member.get(`/api/stats/range?from=2026-11&to=2026-11&owner=${t.adminId}`))
+        .statusCode,
+    ).toBe(403);
+    const stats = (
+      await t.member.get('/api/stats/range?from=2026-11&to=2026-11')
+    ).json<RangeStats>();
+    expect(stats.months[0]?.expense).toBe(1000);
+    expect(stats.members).toEqual([]);
+
+    const all = (await t.admin.get('/api/transactions?month=2026-11')).json<TransactionPage>();
+    expect(all.items.map((i) => i.id).sort()).toEqual([mine.id, theirs.id, admins.id].sort());
+    expect(
+      (await t.admin.get('/api/summary?month=2026-11&owner=all')).json<MonthSummary>().expense,
+    ).toBe(7000);
+    const family = (
+      await t.admin.get('/api/stats/range?from=2026-11&to=2026-11')
+    ).json<RangeStats>();
+    expect(family.members.map((m) => m.expense).sort()).toEqual([1000, 2000, 4000]);
+    expect((await t.admin.get(`/api/transactions/${theirs.id}`)).statusCode).toBe(200);
+  });
+
+  it('lets only an admin record for someone else', async () => {
+    const t = await setup();
+    const forAdmin = await t.member.post('/api/transactions', {
+      type: 'expense',
+      amount: 100,
+      ownerUserId: t.adminId,
+    });
+    expect(forAdmin.statusCode).toBe(403);
+    const own = await addTx(t.member, { amount: 100 });
+    expect(
+      (await t.member.patch(`/api/transactions/${own.id}`, { ownerUserId: t.adminId })).statusCode,
+    ).toBe(403);
+    const forMember = await addTx(t.admin, { amount: 300, ownerUserId: t.memberId });
+    expect((await t.member.get(`/api/transactions/${forMember.id}`)).statusCode).toBe(200);
+  });
+
+  it("refuses another member's card or account as the payment method", async () => {
+    const t = await setup();
+    const adminCard = await addAccount(t.admin, { name: '관리자카드' });
+    const family = await addAccount(t.admin, { name: '가족카드', primaryUserId: t.memberId });
+    const res = await t.member.post('/api/transactions', {
+      type: 'expense',
+      amount: 100,
+      accountId: adminCard.id,
+    });
+    expect(code(res)).toBe('account_invalid');
+    expect((await addTx(t.member, { amount: 100, accountId: family.id })).accountName).toBe(
+      '가족카드',
+    );
+    const own = await addTx(t.member, { amount: 100 });
+    expect(
+      code(
+        await t.member.post('/api/transactions/bulk', { ids: [own.id], accountId: adminCard.id }),
+      ),
+    ).toBe('account_invalid');
+  });
+});
+
 describe('private transactions', () => {
   it('are visible to and counted for their owner only', async () => {
     const t = await setup();
@@ -243,15 +348,15 @@ describe('transaction validation and editing', () => {
     expect(cancelled.status).toBe('cancelled');
   });
 
-  it('lets any member edit and delete visible transactions', async () => {
+  it("lets an admin edit and delete a member's transactions", async () => {
     const t = await setup();
-    const tx = await addTx(t.admin, { amount: 8000, merchant: '행복마트' });
-    const edited = await t.member.patch(`/api/transactions/${tx.id}`, {
+    const tx = await addTx(t.member, { amount: 8000, merchant: '행복마트' });
+    const edited = await t.admin.patch(`/api/transactions/${tx.id}`, {
       categoryId: t.cat('생활/생활용품'),
     });
     expect(edited.json<TransactionInfo>().categoryName).toBe('생활 > 생활용품');
-    expect((await t.member.delete(`/api/transactions/${tx.id}`)).statusCode).toBe(204);
-    expect((await t.admin.get(`/api/transactions/${tx.id}`)).statusCode).toBe(404);
+    expect((await t.admin.delete(`/api/transactions/${tx.id}`)).statusCode).toBe(204);
+    expect((await t.member.get(`/api/transactions/${tx.id}`)).statusCode).toBe(404);
   });
 
   it('defaults to now, the signed-in owner and manual source', async () => {

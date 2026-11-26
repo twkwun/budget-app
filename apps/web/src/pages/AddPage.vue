@@ -231,7 +231,7 @@ async function save(): Promise<void> {
             @input="timeEdited = true"
           />
         </label>
-        <label v-if="ledger.activeMembers.length > 1" class="field">
+        <label v-if="auth.isAdmin && ledger.activeMembers.length > 1" class="field">
           <span>누구 것</span>
           <select v-model="ownerUserId">
             <option v-for="m in ledger.activeMembers" :key="m.id" :value="m.id">

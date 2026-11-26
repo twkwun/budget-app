@@ -16,6 +16,7 @@ import { and, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import { addDays, isAggregatorMerchant, merchantSimilarity, toLocalDate } from '@budget/shared';
 import type { AppDatabase } from '../db/client.ts';
 import { importBatches, rawRecords, transactions } from '../db/schema.ts';
+import { visibleTo } from './queries.ts';
 
 export const MATCH_THRESHOLD = 0.6;
 export const DIFFERENT_THRESHOLD = 0.3;
@@ -80,7 +81,7 @@ export function findDuplicate(
         input.accountId === null
           ? undefined
           : or(eq(transactions.accountId, input.accountId), isNull(transactions.accountId)),
-        or(eq(transactions.isPrivate, false), eq(transactions.ownerUserId, input.viewerId)),
+        visibleTo(input.viewerId),
         input.excludeLinkedSource
           ? sql`not exists (select 1 from ${rawRecords} where ${rawRecords.transactionId} = ${transactions.id} and ${rawRecords.source} = ${input.excludeLinkedSource})`
           : undefined,

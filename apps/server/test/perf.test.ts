@@ -111,13 +111,19 @@ describe('performance with 20,000 transactions', () => {
       .slice(0, 4);
     db.insert(schema.budgets)
       .values([
-        { month: '2025-01', categoryId: null, amount: 3_000_000 },
-        ...topExpense.map((c) => ({ month: '2025-06', categoryId: c.id, amount: 500_000 })),
+        { userId: userA.id, month: '2025-01', categoryId: null, amount: 3_000_000 },
+        ...topExpense.map((c) => ({
+          userId: userA.id,
+          month: '2025-06',
+          categoryId: c.id,
+          amount: 500_000,
+        })),
       ])
       .run();
     db.insert(schema.recurringExpenses)
       .values(
         ['가맹점1', '가맹점2', '가맹점3'].map((matchKey) => ({
+          userId: userA.id,
           name: matchKey,
           matchKey,
           amount: 100_000,
@@ -153,8 +159,8 @@ describe('performance with 20,000 transactions', () => {
     const summary = time(() => monthSummary(logged, userA.id, month, null));
     const memberSummary = time(() => monthSummary(logged, userA.id, month, userB.id));
     const now = Date.parse('2025-11-20T03:00:00Z');
-    const home = time(() => homeSummary(logged, userA.id, month, null, now));
-    const recurring = time(() => recurringOverview(logged, userA.id, month, now));
+    const home = time(() => homeSummary(logged, userA, month, null, now));
+    const recurring = time(() => recurringOverview(logged, userA.id, userA.id, month, now));
     const detect = time(() => refreshSuggestions(logged, now));
     const twelve = time(() => rangeStats(logged, userA.id, '2024-12', '2025-11', null));
     const twelveMember = time(() => rangeStats(logged, userA.id, '2024-12', '2025-11', userB.id));

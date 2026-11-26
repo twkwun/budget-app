@@ -17,18 +17,20 @@ import {
 import type { AppDatabase } from '../db/client.ts';
 import { accounts, importAccountMappings, rawRecords, transactions } from '../db/schema.ts';
 import { errors } from '../http/errors.ts';
+import { accountVisibleTo, canSeeAccount, type Viewer } from '../ledger/access.ts';
+import { visibleTo } from '../ledger/queries.ts';
 import type { ParsedRow } from './rows.ts';
 import { labelLast4, normLabel, suggestAccount, suggestIssuer } from './service.ts';
 
 type AccountRow = typeof accounts.$inferSelect;
 
-/** Transaction ids without an account, by normalized 결제수단 label. */
-function unlinkedByLabel(db: AppDatabase): Map<string, Set<number>> {
+/** Transaction ids without an account the viewer can see, by normalized 결제수단 label. */
+function unlinkedByLabel(db: AppDatabase, viewerId: number): Map<string, Set<number>> {
   const rows = db
     .select({ id: transactions.id, parsed: rawRecords.parsed })
     .from(rawRecords)
     .innerJoin(transactions, eq(rawRecords.transactionId, transactions.id))
-    .where(and(eq(rawRecords.source, 'file'), isNull(transactions.accountId)))
+    .where(and(eq(rawRecords.source, 'file'), isNull(transactions.accountId), visibleTo(viewerId)))
     .all();
   const out = new Map<string, Set<number>>();
   for (const r of rows) {
@@ -41,9 +43,9 @@ function unlinkedByLabel(db: AppDatabase): Map<string, Set<number>> {
   return out;
 }
 
-export function unlinkedLabels(db: AppDatabase): UnlinkedLabelInfo[] {
-  const all = db.select().from(accounts).all();
-  return [...unlinkedByLabel(db).entries()]
+export function unlinkedLabels(db: AppDatabase, viewer: Viewer): UnlinkedLabelInfo[] {
+  const all = db.select().from(accounts).where(accountVisibleTo(viewer)).all();
+  return [...unlinkedByLabel(db, viewer.id).entries()]
     .map(([label, ids]) => {
       const kind = inferAccountKind(label) ?? 'other';
       return {
@@ -66,10 +68,11 @@ export function unlinkedLabels(db: AppDatabase): UnlinkedLabelInfo[] {
 export function linkLabels(
   db: AppDatabase,
   items: LabelLinkRequest['items'],
-  userId: number,
+  viewer: Viewer,
   now: number,
 ): LabelLinkResult & { createdAccounts: AccountRow[] } {
-  const byLabel = unlinkedByLabel(db);
+  const userId = viewer.id;
+  const byLabel = unlinkedByLabel(db, userId);
   const createdAccounts: AccountRow[] = [];
   let linked = 0;
   db.transaction((tx) => {
@@ -83,7 +86,7 @@ export function linkLabels(
       let account: AccountRow | undefined;
       if (item.accountId !== undefined) {
         account = tx.select().from(accounts).where(eq(accounts.id, item.accountId)).get();
-        if (!account || account.archivedAt) {
+        if (!account || account.archivedAt || !canSeeAccount(viewer, account)) {
           throw errors.conflict('account_invalid', 'Unknown or archived account');
         }
       } else if (item.create) {

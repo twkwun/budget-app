@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import type { FastifyPluginAsync } from 'fastify';
 import {
@@ -16,6 +16,7 @@ import type { UserRow } from '../auth/sessions.ts';
 import type { AppContext } from '../context.ts';
 import { accounts, users } from '../db/schema.ts';
 import { errors } from '../http/errors.ts';
+import { accountVisibleTo, canSeeAccount } from '../ledger/access.ts';
 import { parse } from '../http/validation.ts';
 import { linkLabels, unlinkedLabels } from '../importer/labels.ts';
 import { linkUnmatchedCards } from '../sms/ingest.ts';
@@ -68,13 +69,13 @@ export function accountRoutes(ctx: AppContext): FastifyPluginAsync {
   const owner = alias(users, 'owner');
   const primary = alias(users, 'primary_user');
 
-  const list = (viewer: UserRow, where?: ReturnType<typeof eq>): AccountInfo[] =>
+  const list = (viewer: UserRow, where?: SQL): AccountInfo[] =>
     ctx.db
       .select({ account: accounts, ownerName: owner.displayName, primaryName: primary.displayName })
       .from(accounts)
       .innerJoin(owner, eq(accounts.ownerUserId, owner.id))
       .leftJoin(primary, eq(accounts.primaryUserId, primary.id))
-      .where(where)
+      .where(and(accountVisibleTo(viewer), where))
       .orderBy(asc(accounts.sortOrder), asc(accounts.id))
       .all()
       .map(({ account: a, ownerName, primaryName }) => ({
@@ -101,7 +102,7 @@ export function accountRoutes(ctx: AppContext): FastifyPluginAsync {
   };
 
   return async (app) => {
-    // Accounts are household-wide: everyone sees every account (names only).
+    // A member sees the accounts they hold or use; an admin sees all of them.
     app.get('/accounts', async (request) => list(currentAuth(request).user));
 
     app.post('/accounts', async (request, reply) => {
@@ -163,7 +164,7 @@ export function accountRoutes(ctx: AppContext): FastifyPluginAsync {
         request.body,
       );
       const existing = ctx.db.select().from(accounts).where(eq(accounts.id, id)).get();
-      if (!existing) throw errors.notFound('Account not found');
+      if (!existing || !canSeeAccount(user, existing)) throw errors.notFound('Account not found');
       if (!canEditAccount(user, existing)) {
         throw errors.forbidden('Only the owner or an admin can change this account');
       }
@@ -205,8 +206,7 @@ export function accountRoutes(ctx: AppContext): FastifyPluginAsync {
 
     /** 결제수단 labels of imported transactions still without an account. */
     app.get('/accounts/unlinked-labels', async (request): Promise<UnlinkedLabelInfo[]> => {
-      currentAuth(request);
-      return unlinkedLabels(ctx.db);
+      return unlinkedLabels(ctx.db, currentAuth(request).user);
     });
 
     /** Link labels to accounts (creating them as asked) and fill those transactions. */
@@ -238,12 +238,12 @@ export function accountRoutes(ctx: AppContext): FastifyPluginAsync {
         }),
         request.body,
       );
-      const result = linkLabels(ctx.db, body.items, user.id, ctx.now());
+      const result = linkLabels(ctx.db, body.items, user, ctx.now());
       for (const account of result.createdAccounts) linkUnmatchedCards(ctx.db, account, ctx.now());
       return { created: result.created, linked: result.linked };
     });
 
-    // Display order is shared presentation, so any member may reorder.
+    // Display order is shared presentation; a member reorders the accounts they see.
     app.put('/accounts/order', async (request) => {
       const { user } = currentAuth(request);
       const { ids } = parse(
@@ -255,7 +255,7 @@ export function accountRoutes(ctx: AppContext): FastifyPluginAsync {
         const found = tx
           .select({ id: accounts.id })
           .from(accounts)
-          .where(inArray(accounts.id, ids))
+          .where(and(inArray(accounts.id, ids), accountVisibleTo(user)))
           .all();
         if (found.length !== ids.length) throw errors.validation('Unknown account');
         ids.forEach((accountId, index) => {

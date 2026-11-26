@@ -14,6 +14,7 @@ import { isAggregatorMerchant, normalizeMerchant, type RuleMatchType } from '@bu
 import type { AppDatabase } from '../db/client.ts';
 import { categories, categoryRules, transactions } from '../db/schema.ts';
 import { KEYWORD_RULES } from './keyword-rules.ts';
+import { visibleTo } from './queries.ts';
 
 type Db = Pick<AppDatabase, 'select' | 'insert' | 'update'>;
 export type CategorizeReason = 'rule' | 'mapped' | 'history' | 'keyword';
@@ -125,6 +126,8 @@ function categorizeWith(
         eq(transactions.merchantKey, key),
         eq(transactions.type, kind),
         isNull(categories.archivedAt),
+        // The family learns together: any member's non-private entry may teach
+        // the category. Only the category is used, nothing else is shown.
         or(eq(transactions.isPrivate, false), eq(transactions.ownerUserId, input.viewerId)),
       ),
     )
@@ -215,7 +218,7 @@ export function applyRuleToUncategorized(
         eq(transactions.type, cat.kind),
         sql`${transactions.status} <> 'cancelled'`,
         sql`${transactions.merchantKey} is not null`,
-        or(eq(transactions.isPrivate, false), eq(transactions.ownerUserId, viewerId)),
+        visibleTo(viewerId),
       ),
     )
     .all()

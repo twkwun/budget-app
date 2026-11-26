@@ -17,6 +17,7 @@ import { errorMessage } from '../auth/messages.ts';
 import { budgetLineSeries, excessItemStyle, splitOver } from '../charts/budget-marks.ts';
 import type { ChartTheme } from '../charts/theme.ts';
 import { compactKrw, monthLabel } from '../ledger/format.ts';
+import { usePlanUser } from '../ledger/plan-user.ts';
 import AppIcon from './AppIcon.vue';
 import BottomSheet from './BottomSheet.vue';
 import EChart from './EChart.vue';
@@ -27,6 +28,7 @@ import EChart from './EChart.vue';
  */
 const route = useRoute();
 const router = useRouter();
+const plan = usePlanUser();
 const thisMonth = currentYearMonth();
 
 const COUNTS = [6, 12] as const;
@@ -62,7 +64,7 @@ async function load(): Promise<void> {
   error.value = '';
   try {
     data.value = await api.get<BudgetMonthsReport>(
-      `/budgets/months?to=${to.value}&count=${count.value}`,
+      `/budgets/months?to=${to.value}&count=${count.value}${plan.param.value}`,
     );
     // On a phone the latest months are the ones to see first.
     await nextTick();
@@ -73,7 +75,7 @@ async function load(): Promise<void> {
     loading.value = false;
   }
 }
-watch([to, count], () => void load());
+watch([to, count, plan.userId], () => void load());
 onMounted(() => void load());
 
 const rows = computed<BudgetMonthRow[]>(() =>
@@ -131,6 +133,7 @@ function cellLink(row: BudgetMonthRow, month: YearMonth): RouteLocationRaw {
       month,
       type: 'expense',
       ...(row.categoryId === null ? {} : { category: String(row.categoryId) }),
+      ...plan.ownerFilter.value,
     },
   };
 }
@@ -228,7 +231,7 @@ function openMonth(item: { dataIndex: number; seriesIndex: number }): void {
 }
 function editBudget(): void {
   selected.value = null;
-  void router.push({ path: '/budgets', query: { month: thisMonth } });
+  void router.push({ path: '/budgets', query: { month: thisMonth, ...plan.query.value } });
 }
 </script>
 
@@ -278,7 +281,10 @@ function editBudget(): void {
     <template v-if="data">
       <div v-if="!hasBudgets" class="card empty" data-testid="budget-months-empty">
         <p>{{ rangeLabel }}에는 정해 둔 예산이 없습니다.</p>
-        <RouterLink :to="{ path: '/budgets', query: { month: thisMonth } }" class="btn btn-primary">
+        <RouterLink
+          :to="{ path: '/budgets', query: { month: thisMonth, ...plan.query.value } }"
+          class="btn btn-primary"
+        >
           예산 정하기
         </RouterLink>
       </div>

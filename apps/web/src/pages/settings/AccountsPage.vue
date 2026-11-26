@@ -136,7 +136,7 @@ const move = (a: AccountInfo, delta: number) =>
     <h1>카드·계좌</h1>
     <p class="muted small">
       카드번호·계좌번호는 끝 4자리만 저장합니다. 카드는 명의자 외에 실제로 쓰는 사람을 지정할 수
-      있습니다.
+      있습니다. 내가 명의자이거나 실제 사용자인 카드·계좌만 보입니다(관리자는 모두).
     </p>
     <p v-if="error" class="error-text" role="alert">{{ error }}</p>
     <p v-if="linkedNotice" class="notice" role="status">{{ linkedNotice }}</p>

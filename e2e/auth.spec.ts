@@ -382,7 +382,7 @@ test('file import: password, payment-method mapping, 확인됨 with SMS, re-impo
   await expect(page.getByTestId('import-apply')).toBeDisabled();
 });
 
-test('budget on 홈, 통계 month into 내역, CSV export', async ({ page }) => {
+test('budget on 홈, 통계 month into 내역, CSV export', async ({ browser, page }) => {
   page.on('dialog', (d) => void d.accept());
   await page.goto('/login');
   await page.getByTestId('login-name').fill(ADMIN.login);
@@ -433,15 +433,23 @@ test('budget on 홈, 통계 month into 내역, CSV export', async ({ page }) => 
   await expect(over.getByTestId('budget-plan-line')).toHaveCount(1);
   await expect(budgets.getByTestId('budget-plan-line')).toHaveCount(1);
 
-  // 통계 → this month in the table → 내역 filtered to that month's spending.
+  // 통계: budgets are personal, so 가족 전체 asks the admin to pick someone.
   await page.goto('/stats');
   await expect(page.getByTestId('stats-expense')).not.toHaveText('0원');
+  await expect(page.getByTestId('budget-monthly-hidden')).toContainText('구성원을 고르고');
+  // → the admin's own view → this month in the table → 내역 of that month.
+  await page.getByTestId('scope-switch').getByRole('radio', { name: ADMIN.name }).click();
   // 월별 예산·지출: this month has an overall budget that was not exceeded.
   await expect(page.getByTestId('budget-monthly-summary')).toContainText(
     '1달 중 넘은 달이 없습니다',
   );
   // One budgeted month is too few for a trend sentence.
-  await expect(page.getByTestId('budget-trend-notes')).toHaveCount(0);
+  await expect(page.getByTestId('budget-monthly-trend-notes')).toHaveCount(0);
+  // 월별 분류 예산·지출: 식비 (the only category budget) went over this month.
+  await expect(page.getByTestId('category-budget-pick')).toContainText('식비');
+  await expect(page.getByTestId('category-budget-summary')).toContainText(
+    '식비 예산이 있던 1달 중 1달 넘었습니다',
+  );
   await page.getByTestId('monthly-table').locator('summary').click();
   const [y, m] = month.split('-').map(Number);
   await page
@@ -449,7 +457,7 @@ test('budget on 홈, 통계 month into 내역, CSV export', async ({ page }) => 
     .getByRole('link', { name: `${y}년 ${m}월` })
     .click();
   await expect(page).toHaveURL(
-    new RegExp(`/transactions\\?month=${month}&basis=date&type=expense`),
+    new RegExp(`/transactions\\?month=${month}&basis=date&ownerId=\\d+&type=expense`),
   );
   await expect(page.getByTestId('tx-row').filter({ hasText: '=예산테스트' })).toHaveCount(1);
 
@@ -467,4 +475,23 @@ test('budget on 홈, 통계 month into 내역, CSV export', async ({ page }) => 
   expect(text.split('\r\n')[0]).toContain('날짜,시간,구분,금액,가맹점');
   expect(text).toContain(`${today},`);
   expect(text).toContain("'=예산테스트");
+
+  // A member sees none of it: not the admin's spending, budgets or members.
+  const context = await browser.newContext();
+  const member = await context.newPage();
+  await member.goto('/login');
+  await member.getByTestId('login-name').fill(MEMBER.login);
+  await member.getByTestId('login-password').fill(MEMBER.password);
+  await member.getByRole('button', { name: '비밀번호로 로그인' }).click();
+  await expect(member).toHaveURL(/\/$/);
+  await expect(member.getByTestId('kpi-expense')).toContainText('0원');
+  await expect(member.getByTestId('scope-switch')).toHaveCount(0);
+  await member.goto(`/transactions?month=${month}`);
+  await expect(member.getByTestId('tx-row').filter({ hasText: '=예산테스트' })).toHaveCount(0);
+  await member.goto('/budgets');
+  await expect(member.getByTestId('edit-overall')).toHaveText('정하기');
+  await expect(member.getByTestId('budget-user')).toHaveCount(0);
+  const theirs = await member.request.get(`/api/transactions/${(await created.json()).id}`);
+  expect(theirs.status()).toBe(404);
+  await context.close();
 });

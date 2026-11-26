@@ -1,11 +1,11 @@
 /**
- * 고정지출: monthly payments the family expects. Candidates are detected from
- * shared (non-private) spending — the same merchant, a similar amount, once a
- * month for at least three consecutive months — and suggested; the family
- * confirms or dismisses them, or adds items by hand. Confirmed items are
- * matched against each month's payments the viewer can see.
+ * 고정지출: monthly payments a member expects. Every member keeps their own
+ * list. Candidates are detected from the member's own (non-private) spending — the same
+ * merchant, a similar amount, once a month for at least three consecutive
+ * months — and suggested; the member confirms or dismisses them, or adds items
+ * by hand. Confirmed items are matched against the member's own payments.
  */
-import { and, eq, gte, isNotNull, lt, ne, sql } from 'drizzle-orm';
+import { and, eq, gte, isNotNull, isNull, lt, ne, sql } from 'drizzle-orm';
 import {
   RECURRING_AMOUNT_TOLERANCE,
   addMonths,
@@ -21,7 +21,7 @@ import {
   type YearMonth,
 } from '@budget/shared';
 import type { AppDatabase } from '../db/client.ts';
-import { accounts, categories, recurringExpenses, transactions } from '../db/schema.ts';
+import { accounts, categories, recurringExpenses, transactions, users } from '../db/schema.ts';
 import { visibleTo } from '../ledger/queries.ts';
 
 type RecurringRow = typeof recurringExpenses.$inferSelect;
@@ -57,11 +57,17 @@ export function amountMatches(expected: number, actual: number): boolean {
   return Math.abs(actual - expected) <= expected * RECURRING_AMOUNT_TOLERANCE;
 }
 
+/**
+ * `ownerId`'s payments in the range: those `viewerId` can see, or — for
+ * detection, without a viewer — the non-private ones, so a suggestion (which
+ * an admin can see) never reveals a 나만 보기 entry.
+ */
 function payments(
   db: AppDatabase,
   fromDate: LocalDate,
   toDateExclusive: LocalDate,
-  visibility: { viewerId: number } | 'shared',
+  ownerId: number,
+  viewerId?: number,
 ): PaymentRow[] {
   return db
     .select({
@@ -81,9 +87,8 @@ function payments(
         isNotNull(transactions.merchantKey),
         gte(transactions.occurredDate, fromDate),
         lt(transactions.occurredDate, toDateExclusive),
-        visibility === 'shared'
-          ? eq(transactions.isPrivate, false)
-          : visibleTo(visibility.viewerId),
+        eq(transactions.ownerUserId, ownerId),
+        viewerId === undefined ? eq(transactions.isPrivate, false) : visibleTo(viewerId),
       ),
     )
     .all();
@@ -142,17 +147,32 @@ export function detectCandidate(rows: PaymentRow[], currentMonth: YearMonth): Ca
   };
 }
 
-/** Find new candidates in shared spending and store them as suggestions. Returns how many. */
-export function refreshSuggestions(db: AppDatabase, now: number): number {
+/**
+ * Find new candidates in a member's spending (every active member's when
+ * `userId` is omitted) and store them as that member's suggestions. Returns how many.
+ */
+export function refreshSuggestions(db: AppDatabase, now: number, userId?: number): number {
+  if (userId === undefined) {
+    return db
+      .select({ id: users.id })
+      .from(users)
+      .where(isNull(users.disabledAt))
+      .all()
+      .reduce((n, u) => n + refreshSuggestions(db, now, u.id), 0);
+  }
   const currentMonth = toYearMonth(now);
   const from = `${addMonths(currentMonth, -DETECTION.lookbackMonths)}-01`;
   const to = `${addMonths(currentMonth, 1)}-01`;
   const byKey = new Map<string, PaymentRow[]>();
-  for (const row of payments(db, from, to, 'shared')) {
+  for (const row of payments(db, from, to, userId)) {
     if (isAggregatorMerchant(row.merchant)) continue;
     byKey.set(row.merchantKey, [...(byKey.get(row.merchantKey) ?? []), row]);
   }
-  const known = db.select({ matchKey: recurringExpenses.matchKey }).from(recurringExpenses).all();
+  const known = db
+    .select({ matchKey: recurringExpenses.matchKey })
+    .from(recurringExpenses)
+    .where(eq(recurringExpenses.userId, userId))
+    .all();
   let added = 0;
   for (const [key, rows] of byKey) {
     // Anything an existing item (in any state) already covers is not suggested again.
@@ -161,6 +181,7 @@ export function refreshSuggestions(db: AppDatabase, now: number): number {
     if (!candidate) continue;
     db.insert(recurringExpenses)
       .values({
+        userId,
         name: candidate.name,
         matchKey: candidate.matchKey,
         amount: candidate.amount,
@@ -218,7 +239,7 @@ export function matchPayments(
   return result;
 }
 
-function itemRows(db: AppDatabase) {
+function itemRows(db: AppDatabase, userId: number) {
   return db
     .select({
       item: recurringExpenses,
@@ -228,6 +249,7 @@ function itemRows(db: AppDatabase) {
     .from(recurringExpenses)
     .leftJoin(categories, eq(recurringExpenses.categoryId, categories.id))
     .leftJoin(accounts, eq(recurringExpenses.accountId, accounts.id))
+    .where(eq(recurringExpenses.userId, userId))
     .all();
 }
 
@@ -252,15 +274,19 @@ function toItem(
   };
 }
 
-/** Confirmed items with their state in `month`, plus suggestions and dismissed items. */
+/**
+ * `userId`'s confirmed items with their state in `month`, plus suggestions and
+ * dismissed items, matched against that member's payments `viewerId` can see.
+ */
 export function recurringOverview(
   db: AppDatabase,
   viewerId: number,
+  userId: number,
   month: YearMonth,
   now: number,
   options: { includeOthers?: boolean } = {},
 ): RecurringOverview {
-  const rows = itemRows(db);
+  const rows = itemRows(db, userId);
   const confirmed = rows.filter((r) => r.item.status === 'confirmed');
   const today = toLocalDate(now);
   const includeOthers = options.includeOthers ?? true;
@@ -268,7 +294,7 @@ export function recurringOverview(
   const historyMonths = includeOthers ? 6 : 0;
   const from = `${addMonths(month, -historyMonths)}-01`;
   const to = `${addMonths(month, 1)}-01`;
-  const visible = rows.length ? payments(db, from, to, { viewerId }) : [];
+  const visible = rows.length ? payments(db, from, to, userId, viewerId) : [];
 
   const matched = matchPayments(
     confirmed.map((r) => r.item),
@@ -299,6 +325,7 @@ export function recurringOverview(
     return [...months].sort().reverse();
   };
   return {
+    userId,
     month,
     items,
     suggestions: includeOthers
@@ -311,12 +338,12 @@ export function recurringOverview(
   };
 }
 
-export function suggestionCount(db: AppDatabase): number {
+export function suggestionCount(db: AppDatabase, userId: number): number {
   return (
     db
       .select({ n: sql<number>`count(*)` })
       .from(recurringExpenses)
-      .where(eq(recurringExpenses.status, 'suggested'))
+      .where(and(eq(recurringExpenses.userId, userId), eq(recurringExpenses.status, 'suggested')))
       .get()?.n ?? 0
   );
 }

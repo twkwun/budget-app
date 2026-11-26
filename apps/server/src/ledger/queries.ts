@@ -1,6 +1,7 @@
 /**
- * Transaction queries. Every read goes through `visibleTo`, so a private
- * transaction is only ever seen (and counted) by its owner.
+ * Transaction queries. Every read goes through `visibleTo`: a member only ever
+ * sees (and counts) their own transactions; an admin sees the whole family's,
+ * except another member's private (나만 보기) ones.
  */
 import {
   and,
@@ -39,8 +40,20 @@ import type { AppDatabase } from '../db/client.ts';
 import { accounts, categories, rawRecords, transactions, users } from '../db/schema.ts';
 import { errors } from '../http/errors.ts';
 
+/** True when `userId` is an active admin (evaluated once per query by SQLite). */
+export function isAdminSql(userId: number): SQL {
+  return sql`exists (select 1 from ${users} where ${users.id} = ${userId} and ${users.role} = 'admin' and ${users.disabledAt} is null)`;
+}
+
+/**
+ * Transactions `userId` may see: their own, plus — for an admin — every other
+ * member's that is not private. Members never see each other's transactions.
+ */
 export function visibleTo(userId: number): SQL {
-  return or(eq(transactions.isPrivate, false), eq(transactions.ownerUserId, userId)) as SQL;
+  return or(
+    eq(transactions.ownerUserId, userId),
+    and(eq(transactions.isPrivate, false), isAdminSql(userId)),
+  ) as SQL;
 }
 
 /** Counted in totals: not cancelled. Transfers are excluded by summing only expense/income. */

@@ -3,12 +3,18 @@ import type { MemberInfo } from '@budget/shared';
 
 /** 가족 전체 / one member. The model is 'all' or a member id. */
 const scope = defineModel<'all' | number>({ required: true });
-defineProps<{ members: MemberInfo[] }>();
+const { withAll = true, label = '보기 범위' } = defineProps<{
+  members: MemberInfo[];
+  /** Offer 가족 전체 (off where only one member's data makes sense). */
+  withAll?: boolean;
+  label?: string;
+}>();
 </script>
 
 <template>
-  <div class="scope" role="radiogroup" aria-label="보기 범위" data-testid="scope-switch">
+  <div class="scope" role="radiogroup" :aria-label="label" data-testid="scope-switch">
     <button
+      v-if="withAll"
       type="button"
       role="radio"
       :aria-checked="scope === 'all'"

@@ -95,7 +95,8 @@ describe('budgets', () => {
       type: 'income',
       categoryId: t.cat('근로소득/급여'),
     });
-    // Another member's private spending is invisible to the admin.
+    // A member's spending counts toward their own budgets, not the admin's.
+    await addTx(t.member, { amount: 6_000, occurredAt: at, categoryId: t.cat('식비/외식') });
     await addTx(t.member, {
       amount: 4_000,
       occurredAt: at,
@@ -114,9 +115,54 @@ describe('budgets', () => {
       percent: 90,
       over: false,
     });
-    const member = await budgets(t, '2026-11', t.member);
-    expect(member.categories[0]).toMatchObject({ spent: 22_000, over: true, percent: 110 });
+    expect(admin.userId).toBe(t.adminId);
+
+    // Every member keeps their own budgets, against their own spending.
+    let member = await budgets(t, '2026-11', t.member);
+    expect(member).toMatchObject({ userId: t.memberId, overall: null, categories: [] });
+    const put = await t.member.put('/api/budgets', {
+      month: '2026-11',
+      categoryId: food,
+      amount: 9_000,
+    });
+    expect(put.statusCode, put.body).toBe(204);
+    member = await budgets(t, '2026-11', t.member);
+    expect(member.categories[0]).toMatchObject({ spent: 10_000, over: true, percent: 111 });
     expect(member.categories[0]?.pace?.status).toBe('over');
+    expect(member.history.map((h) => h.amount)).toEqual([9_000]);
+    expect((await budgets(t, '2026-11')).categories[0]?.amount).toBe(20_000);
+
+    // An admin sees (and may set) a member's budgets, minus their private spending.
+    const seen = await t.admin.get(`/api/budgets?month=2026-11&user=${t.memberId}`);
+    expect(seen.json<BudgetOverview>().categories[0]).toMatchObject({
+      amount: 9_000,
+      spent: 6_000,
+    });
+    // A member never sees another member's budgets.
+    expect((await t.member.get(`/api/budgets?month=2026-11&user=${t.adminId}`)).statusCode).toBe(
+      403,
+    );
+    expect(
+      (
+        await t.member.put('/api/budgets', {
+          month: '2026-11',
+          categoryId: null,
+          amount: 1,
+          userId: t.adminId,
+        })
+      ).statusCode,
+    ).toBe(403);
+    expect(
+      (
+        await t.admin.put('/api/budgets', {
+          month: '2026-11',
+          categoryId: null,
+          amount: 50_000,
+          userId: t.memberId,
+        })
+      ).statusCode,
+    ).toBe(204);
+    expect((await budgets(t, '2026-11', t.member)).overall?.amount).toBe(50_000);
   });
 
   it('accepts only top-level, active expense categories', async () => {
@@ -161,10 +207,27 @@ describe('budgets', () => {
     expect(past.isCurrentMonth).toBe(false);
     expect(past.overall?.pace).toBeNull();
 
+    // 홈 shows the budgets of the person in scope (the viewer in 전체),
+    // against that person's spending only.
+    await addTx(t.member, { amount: 30_000, occurredAt: kst('2026-11-04') });
     const summary = (await t.admin.get('/api/summary?month=2026-11')).json<HomeSummary>();
+    expect(summary.expense).toBe(270_000);
+    expect(summary.planUserId).toBe(t.adminId);
     expect(summary.budgets?.overall?.spent).toBe(240_000);
-    const scoped = await t.admin.get(`/api/summary?month=2026-11&owner=${t.adminId}`);
-    expect(scoped.json<HomeSummary>().budgets).toBeNull();
+    const scoped = (
+      await t.admin.get(`/api/summary?month=2026-11&owner=${t.adminId}`)
+    ).json<HomeSummary>();
+    expect(scoped.budgets?.overall?.spent).toBe(240_000);
+    const ofMember = (
+      await t.admin.get(`/api/summary?month=2026-11&owner=${t.memberId}`)
+    ).json<HomeSummary>();
+    expect(ofMember).toMatchObject({ planUserId: t.memberId, expense: 30_000 });
+    expect(ofMember.budgets?.overall).toBeNull();
+    const member = (await t.member.get('/api/summary?month=2026-11')).json<HomeSummary>();
+    expect(member).toMatchObject({ planUserId: t.memberId, expense: 30_000 });
+    expect((await t.member.get(`/api/summary?month=2026-11&owner=${t.adminId}`)).statusCode).toBe(
+      403,
+    );
   });
 
   it('pace around month start and end', () => {
@@ -298,11 +361,20 @@ describe('budget months (월별 비교)', () => {
     }
   });
 
-  it('counts only what the viewer can see', async () => {
+  it("is per member: a member's own budgets and spending only", async () => {
     const { t } = await seed();
     const member = await report(t, 'to=2026-11&count=4', t.member);
-    expect(member.categories[0]?.cells[3]?.spent).toBe(44_000);
-    expect(member.totalSpent[3]).toBe(48_000);
+    expect(member.overall).toBeNull();
+    expect(member.categories).toEqual([]);
+    expect(member.totalSpent).toEqual([0, 0, 0, 4_000]);
+    // The admin's own report leaves the member's spending out.
+    expect((await report(t, 'to=2026-11&count=4')).totalSpent[3]).toBe(44_000);
+    // An admin may look at a member's report (without their private spending).
+    const ofMember = await report(t, `to=2026-11&count=4&user=${t.memberId}`);
+    expect(ofMember.totalSpent[3]).toBe(0);
+    expect(
+      (await t.member.get(`/api/budgets/months?to=2026-11&count=4&user=${t.adminId}`)).statusCode,
+    ).toBe(403);
   });
 
   it('defaults to 12 months ending this month, never past it, and validates', async () => {
@@ -442,8 +514,14 @@ describe('recurring API', () => {
   it('suggests, confirms, matches and dismisses', async () => {
     const t = await ledgerSetup();
     await seedNetflix(t);
-    // A member's private subscription is never suggested.
+    // Each member gets suggestions from their own spending only, never from
+    // private entries.
     for (const month of ['08', '09', '10']) {
+      await addTx(t.member, {
+        amount: 12_000,
+        merchant: '음악구독',
+        occurredAt: kst(`2026-${month}-09`),
+      });
       await addTx(t.member, {
         amount: 9_900,
         merchant: '비밀구독',
@@ -456,9 +534,20 @@ describe('recurring API', () => {
     const suggestion = overview.suggestions[0]!;
     expect(suggestion).toMatchObject({ amount: 17_000, dayOfMonth: 5, source: 'detected' });
     expect(suggestion.seenMonths).toEqual(['2026-10', '2026-09', '2026-08']);
+    const mine = (await t.member.get('/api/recurring')).json<RecurringOverview>();
+    expect(mine.userId).toBe(t.memberId);
+    expect(mine.suggestions.map((s) => s.name)).toEqual(['음악구독']);
+    // Another member's items are out of reach for a member.
     expect(
-      (await t.member.get('/api/recurring')).json<RecurringOverview>().suggestions,
-    ).toHaveLength(1);
+      (await t.member.patch(`/api/recurring/${suggestion.id}`, { status: 'confirmed' })).statusCode,
+    ).toBe(404);
+    expect((await t.member.delete(`/api/recurring/${suggestion.id}`)).statusCode).toBe(404);
+    expect((await t.member.get(`/api/recurring?user=${t.adminId}`)).statusCode).toBe(403);
+    // An admin may look at a member's list.
+    const ofMember = (
+      await t.admin.get(`/api/recurring?user=${t.memberId}`)
+    ).json<RecurringOverview>();
+    expect(ofMember.suggestions.map((s) => s.name)).toEqual(['음악구독']);
 
     // Not yet confirmed: nothing expected on 홈.
     let home = (await t.admin.get('/api/summary')).json<HomeSummary>();

@@ -43,6 +43,7 @@ import {
 } from '../db/schema.ts';
 import { createCategorizer } from '../ledger/categorize.ts';
 import { findDuplicate, MATCH_THRESHOLD } from '../ledger/dedupe.ts';
+import { visibleTo } from '../ledger/queries.ts';
 import { applyCancel, findCancelTarget, type Tx } from '../sms/ingest.ts';
 import { detectLayout, headerSignature, isBanksalad, missingRoles } from './layout.ts';
 import { parseFileInWorker } from './parse-file.ts';
@@ -472,7 +473,7 @@ function classify(
           eq(transactions.amount, p.amount),
           sql`${transactions.occurredAt} between ${at - CANCEL_LOOKBACK_MS} and ${at + 3600_000}`,
           accountId === null ? undefined : eq(transactions.accountId, accountId),
-          or(eq(transactions.isPrivate, false), eq(transactions.ownerUserId, ctx.userId)),
+          visibleTo(ctx.userId),
         ),
       )
       .all()
@@ -492,7 +493,7 @@ function classify(
           ne(transactions.status, 'cancelled'),
           sql`${transactions.amount} >= ${p.amount}`,
           sql`${transactions.occurredAt} between ${at - CANCEL_LOOKBACK_MS} and ${at + 3600_000}`,
-          or(eq(transactions.isPrivate, false), eq(transactions.ownerUserId, ctx.userId)),
+          visibleTo(ctx.userId),
         ),
       )
       .orderBy(sql`${transactions.amount} = ${p.amount} desc`, sql`${transactions.occurredAt} desc`)
@@ -830,12 +831,7 @@ export async function applyBatch(
             ? tx
                 .select()
                 .from(transactions)
-                .where(
-                  and(
-                    eq(transactions.id, id),
-                    or(eq(transactions.isPrivate, false), eq(transactions.ownerUserId, userId)),
-                  ),
-                )
+                .where(and(eq(transactions.id, id), visibleTo(userId)))
                 .get()
             : undefined;
 

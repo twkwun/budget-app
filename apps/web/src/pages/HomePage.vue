@@ -20,11 +20,13 @@ import MonthNav from '../components/MonthNav.vue';
 import ScopeSwitch from '../components/ScopeSwitch.vue';
 import { basisFromQuery } from '../ledger/basis.ts';
 import { changeRatio, compactKrw, dayLabel, monthLabel } from '../ledger/format.ts';
+import { useAuthStore } from '../stores/auth.ts';
 import { useHealthStore } from '../stores/health.ts';
 import { useLedgerStore } from '../stores/ledger.ts';
 
 const route = useRoute();
 const router = useRouter();
+const auth = useAuthStore();
 const ledger = useLedgerStore();
 const health = useHealthStore();
 
@@ -199,6 +201,23 @@ const hasBudgets = computed(
   () => !!budgetRows.value && (!!budgetRows.value.overall || budgetRows.value.top.length > 0),
 );
 const recurring = computed(() => summary.value?.recurring ?? null);
+
+/**
+ * Budgets and 고정지출 are personal: an admin sees their own in 가족 전체
+ * ("내 예산") and a member's when that member is picked.
+ */
+const planUserId = computed(() => summary.value?.planUserId ?? auth.user?.id ?? null);
+const planOwner = computed(() => {
+  if (!auth.isAdmin) return '';
+  if (planUserId.value === auth.user?.id) return scope.value === 'all' ? '내 ' : '';
+  const name = ledger.members.find((m) => m.id === planUserId.value)?.displayName;
+  return name ? `${name}의 ` : '';
+});
+const planQuery = computed(() =>
+  planUserId.value === auth.user?.id || planUserId.value === null
+    ? {}
+    : { user: String(planUserId.value) },
+);
 const RECURRING_STATE = {
   paid: '결제됨',
   upcoming: '예정',
@@ -223,7 +242,7 @@ const listLink = (extra: Record<string, string>) => ({
     <header class="head">
       <MonthNav v-model="month" />
       <ScopeSwitch
-        v-if="ledger.activeMembers.length > 1"
+        v-if="auth.isAdmin && ledger.activeMembers.length > 1"
         v-model="scope"
         :members="ledger.activeMembers"
       />
@@ -295,8 +314,11 @@ const listLink = (extra: Record<string, string>) => ({
         data-testid="home-budgets"
       >
         <div class="card-head">
-          <h2 id="home-budget">예산</h2>
-          <RouterLink :to="{ path: '/budgets', query: { month } }" class="link-button">
+          <h2 id="home-budget">{{ planOwner }}예산</h2>
+          <RouterLink
+            :to="{ path: '/budgets', query: { month, ...planQuery } }"
+            class="link-button"
+          >
             {{ hasBudgets ? '예산 관리' : '예산 설정' }}
           </RouterLink>
         </div>
@@ -305,7 +327,7 @@ const listLink = (extra: Record<string, string>) => ({
           <BudgetMeter v-for="b in budgetRows.top" :key="b.categoryId ?? 0" :budget="b" />
           <RouterLink
             v-if="budgetRows.more"
-            :to="{ path: '/budgets', query: { month } }"
+            :to="{ path: '/budgets', query: { month, ...planQuery } }"
             class="muted small"
           >
             분류 예산 {{ budgetRows.more }}개 더 보기
@@ -315,9 +337,6 @@ const listLink = (extra: Record<string, string>) => ({
           한 달 예산을 정해 두면 얼마나 썼는지, 이 속도면 괜찮은지 여기서 볼 수 있습니다.
         </p>
       </section>
-      <p v-else-if="summary && !summary.budgets && scope !== 'all'" class="muted small scope-note">
-        예산과 고정지출은 ‘가족 전체’에서 볼 수 있습니다.
-      </p>
 
       <section
         v-if="recurring && (recurring.items.length || recurring.suggestionCount)"
@@ -326,8 +345,10 @@ const listLink = (extra: Record<string, string>) => ({
         data-testid="home-recurring"
       >
         <div class="card-head">
-          <h2 id="home-recurring">고정지출</h2>
-          <RouterLink to="/settings/recurring" class="link-button">관리</RouterLink>
+          <h2 id="home-recurring">{{ planOwner }}고정지출</h2>
+          <RouterLink :to="{ path: '/settings/recurring', query: planQuery }" class="link-button"
+            >관리</RouterLink
+          >
         </div>
         <p v-if="recurring.items.length" class="muted small">
           <template v-if="recurring.remainingAmount">
@@ -360,7 +381,7 @@ const listLink = (extra: Record<string, string>) => ({
         </ul>
         <RouterLink
           v-if="recurring.suggestionCount"
-          to="/settings/recurring"
+          :to="{ path: '/settings/recurring', query: planQuery }"
           class="suggest"
           data-testid="recurring-suggestions-link"
         >
@@ -533,9 +554,6 @@ const listLink = (extra: Record<string, string>) => ({
 .small {
   font-size: 0.85rem;
   margin: 0;
-}
-.scope-note {
-  padding: 0 4px;
 }
 .recurring-list {
   list-style: none;

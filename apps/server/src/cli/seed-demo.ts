@@ -427,54 +427,67 @@ export async function seedDemo(db: AppDatabase, now = Date.now(), hasher = new P
     isPrivate: true,
   });
 
-  // Budgets: a year of history for 월별 비교. The overall budget was set a
-  // year ago, raised three months ago and lowered this month; 식비, 쇼핑 and
-  // 생활 have their own.
+  // Budgets (each member keeps their own): a year of history for 월별 비교.
+  // 수진's overall budget was set a year ago, raised three months ago and
+  // lowered this month, with a 식비 budget; 준호 budgets 쇼핑 and 생활.
   db.insert(s.budgets)
     .values([
       {
         month: addMonths(thisMonth, -11),
         categoryId: null,
         amount: 2_700_000,
+        userId: sujin.id,
         updatedByUserId: sujin.id,
       },
       {
         month: addMonths(thisMonth, -11),
         categoryId: cat('expense.food'),
         amount: 950_000,
+        userId: sujin.id,
         updatedByUserId: sujin.id,
       },
       {
         month: addMonths(thisMonth, -3),
         categoryId: null,
         amount: 3_000_000,
+        userId: sujin.id,
         updatedByUserId: sujin.id,
       },
-      { month: thisMonth, categoryId: null, amount: 2_800_000, updatedByUserId: sujin.id },
+      {
+        userId: sujin.id,
+        month: thisMonth,
+        categoryId: null,
+        amount: 2_800_000,
+        updatedByUserId: sujin.id,
+      },
       {
         month: addMonths(thisMonth, -3),
         categoryId: cat('expense.food'),
         amount: 1_100_000,
+        userId: sujin.id,
         updatedByUserId: sujin.id,
       },
       {
         month: addMonths(thisMonth, -1),
         categoryId: cat('expense.shopping'),
         amount: 150_000,
+        userId: junho.id,
         updatedByUserId: junho.id,
       },
       {
         month: addMonths(thisMonth, -1),
         categoryId: cat('expense.living'),
         amount: 250_000,
+        userId: junho.id,
         updatedByUserId: junho.id,
       },
     ])
     .run();
-  // 고정지출: two confirmed from the monthly items above, two added by hand.
+  // 수진's 고정지출: two confirmed from the monthly items above, two added by hand.
   db.insert(s.recurringExpenses)
     .values([
       {
+        userId: sujin.id,
         name: '아파트 관리비',
         matchKey: normalizeMerchant('아파트 관리비'),
         amount: 268_400,
@@ -485,6 +498,7 @@ export async function seedDemo(db: AppDatabase, now = Date.now(), hasher = new P
         source: 'detected',
       },
       {
+        userId: sujin.id,
         name: '통신요금',
         matchKey: normalizeMerchant('통신요금'),
         amount: 89_000,
@@ -495,6 +509,7 @@ export async function seedDemo(db: AppDatabase, now = Date.now(), hasher = new P
         source: 'detected',
       },
       {
+        userId: sujin.id,
         name: '정수기 렌탈',
         matchKey: normalizeMerchant('정수기 렌탈'),
         amount: 29_900,
@@ -506,6 +521,7 @@ export async function seedDemo(db: AppDatabase, now = Date.now(), hasher = new P
         createdByUserId: sujin.id,
       },
       {
+        userId: sujin.id,
         name: '실손 보험료',
         matchKey: normalizeMerchant('보험료'),
         amount: 132_000,

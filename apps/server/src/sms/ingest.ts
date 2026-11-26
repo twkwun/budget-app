@@ -10,7 +10,7 @@
  * the earlier copy. Two separate identical purchases produce two messages
  * with different receive times, so both are kept.
  */
-import { and, desc, eq, gte, isNull, lte, ne, or, sql, type AnyColumn } from 'drizzle-orm';
+import { and, desc, eq, gte, isNull, lte, ne, sql, type AnyColumn } from 'drizzle-orm';
 import {
   formatKrw,
   merchantSimilarity,
@@ -23,6 +23,7 @@ import type { AppDatabase } from '../db/client.ts';
 import { accounts, rawRecords, transactions, webhookTokens } from '../db/schema.ts';
 import { categorize } from '../ledger/categorize.ts';
 import { findDuplicate } from '../ledger/dedupe.ts';
+import { visibleTo } from '../ledger/queries.ts';
 import {
   digitsMatch,
   messageInstant,
@@ -386,7 +387,7 @@ export function findCancelTarget(
         gte(transactions.occurredAt, new Date(c.at - CANCEL_LOOKBACK_MS)),
         lte(transactions.occurredAt, new Date(c.at + 60 * 60 * 1000)),
         c.accountId === null ? undefined : eq(transactions.accountId, c.accountId),
-        or(eq(transactions.isPrivate, false), eq(transactions.ownerUserId, c.viewerId)),
+        visibleTo(c.viewerId),
       ),
     )
     .orderBy(desc(transactions.occurredAt))

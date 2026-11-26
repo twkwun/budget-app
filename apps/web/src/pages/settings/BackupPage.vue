@@ -121,8 +121,8 @@ const when = (iso: string) =>
     <section class="card block" aria-labelledby="export-title">
       <h2 id="export-title">CSV로 내보내기</h2>
       <p class="muted small">
-        엑셀이나 넘버스에서 바로 열 수 있는 파일입니다. 내가 볼 수 있는 거래만 담기고, 다른 가족의
-        ‘나만 보기’ 거래는 빠집니다. 내보내기 전에 본인 확인을 한 번 더 합니다.
+        엑셀이나 넘버스에서 바로 열 수 있는 파일입니다. 내가 볼 수 있는 거래만 담깁니다(구성원은
+        자기 거래, 관리자는 가족 전체). 내보내기 전에 본인 확인을 한 번 더 합니다.
       </p>
       <div class="presets" role="group" aria-label="기간 빠르게 고르기">
         <button

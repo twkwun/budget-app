@@ -30,10 +30,12 @@ import {
 } from '../ledger/filters.ts';
 import { dayLabel, signedAmount, timeLabel } from '../ledger/format.ts';
 import { useInboxStore } from '../stores/inbox.ts';
+import { useAuthStore } from '../stores/auth.ts';
 import { useLedgerStore } from '../stores/ledger.ts';
 
 const route = useRoute();
 const router = useRouter();
+const auth = useAuthStore();
 const ledger = useLedgerStore();
 const inbox = useInboxStore();
 
@@ -243,7 +245,8 @@ const groups = computed(() => {
   }
   return out;
 });
-const multipleMembers = computed(() => ledger.members.length > 1);
+/** Only an admin sees other members' entries, so only an admin needs names on them. */
+const multipleMembers = computed(() => auth.isAdmin && ledger.members.length > 1);
 const filterCount = computed(() => activeFilterCount(filters.value));
 
 const chips = computed(() => {

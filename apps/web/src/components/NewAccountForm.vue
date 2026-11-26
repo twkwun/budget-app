@@ -40,7 +40,7 @@ function submit(): void {
 <template>
   <form class="stack" @submit.prevent="submit">
     <label class="field">
-      <span>이름 (가족에게 보이는 이름)</span>
+      <span>이름 (목록에 보이는 이름)</span>
       <input
         v-model="displayName"
         :maxlength="DISPLAY_NAME_MAX_LENGTH"

@@ -49,11 +49,21 @@ describe('accounts', () => {
   it('lets only the owner or an admin edit and archive; only admins change owners', async () => {
     const t = await setup();
     const adminCard = await addAccount(t.admin, { name: '관리자카드' });
+    const familyCard = await addAccount(t.admin, { name: '가족카드', primaryUserId: t.memberId });
     const memberCard = await addAccount(t.member, { name: '구성원카드' });
 
+    // A member sees the accounts they hold or use, never anyone else's.
     const list = (await t.member.get('/api/accounts')).json<AccountInfo[]>();
-    expect(list.find((a) => a.id === adminCard.id)?.canEdit).toBe(false);
-    const denied = await t.member.patch(`/api/accounts/${adminCard.id}`, { name: 'x' });
+    expect(list.map((a) => a.id).sort()).toEqual([familyCard.id, memberCard.id].sort());
+    expect(list.find((a) => a.id === familyCard.id)?.canEdit).toBe(false);
+    const all = (await t.admin.get('/api/accounts')).json<AccountInfo[]>();
+    expect(all.map((a) => a.id)).toEqual(
+      expect.arrayContaining([adminCard.id, familyCard.id, memberCard.id]),
+    );
+    expect((await t.member.patch(`/api/accounts/${adminCard.id}`, { name: 'x' })).statusCode).toBe(
+      404,
+    );
+    const denied = await t.member.patch(`/api/accounts/${familyCard.id}`, { name: 'x' });
     expect(denied.statusCode).toBe(403);
     expect(code(denied)).toBe('forbidden');
     expect(
@@ -87,12 +97,17 @@ describe('accounts', () => {
     ).toBe(400);
   });
 
-  it('reorders for everyone and rejects unknown ids', async () => {
+  it('reorders the accounts the person sees and rejects unknown ids', async () => {
     const t = await setup();
     const a = await addAccount(t.admin, { name: 'A' });
     const b = await addAccount(t.member, { name: 'B' });
-    const res = await t.member.put('/api/accounts/order', { ids: [b.id, a.id] });
-    expect(res.json<AccountInfo[]>().map((x) => x.id)).toEqual([b.id, a.id]);
+    const c = await addAccount(t.member, { name: 'C' });
+    const res = await t.member.put('/api/accounts/order', { ids: [c.id, b.id] });
+    expect(res.json<AccountInfo[]>().map((x) => x.id)).toEqual([c.id, b.id]);
     expect((await t.member.put('/api/accounts/order', { ids: [b.id, 999] })).statusCode).toBe(400);
+    // Another member's account is unknown to a member.
+    expect((await t.member.put('/api/accounts/order', { ids: [b.id, a.id] })).statusCode).toBe(400);
+    const admin = await t.admin.put('/api/accounts/order', { ids: [a.id, c.id, b.id] });
+    expect(admin.json<AccountInfo[]>().map((x) => x.id)).toEqual([a.id, c.id, b.id]);
   });
 });

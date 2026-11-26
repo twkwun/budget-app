@@ -1,6 +1,6 @@
 {
   "name": "@budget/shared",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "private": true,
   "type": "module",
   "description": "Shared types and KRW money / Asia/Seoul date helpers",
